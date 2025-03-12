@@ -77,13 +77,19 @@ exports.telegramWebhook = onRequest(async (req, res) => {
       // For non-admin users, get their assigned apartments
       let assignedApartments = [];
       if (!isAdmin) {
-        const assignmentsSnapshot = await db.collection('cleaningAssignments')
+        // Query for assignments where userId field matches this user
+        const assignmentsQuery = await db.collection('cleaningAssignments')
           .where('userId', '==', userId.toString())
           .get();
         
-        logger.log(`Found ${assignmentsSnapshot.size} assignments for user ${userId}`);
+        if (!assignmentsQuery.empty) {
+          // Get the first matching document (assuming one user has one assignment doc)
+          const assignmentDoc = assignmentsQuery.docs[0];
+          assignedApartments = assignmentDoc.data().apartmentId || [];
+          logger.log(`Found ${assignedApartments.length} assigned apartments for user ${userId}`);
+        }
         
-        if (assignmentsSnapshot.empty) {
+        if (assignedApartments.length === 0) {
           await axios.post(`${TELEGRAM_API}/sendMessage`, {
             chat_id: chatId,
             text: "На тебе не додано жодних квартир. :("
@@ -92,8 +98,6 @@ exports.telegramWebhook = onRequest(async (req, res) => {
           return;
         }
         
-        // Get all apartment IDs assigned to this user
-        assignedApartments = assignmentsSnapshot.docs.map(doc => doc.data().apartmentId);
         logger.log(`Assigned apartment IDs: ${JSON.stringify(assignedApartments)}`);
       } else {
         // For admins, we'll fetch all data and not filter by apartment
@@ -167,7 +171,7 @@ exports.telegramWebhook = onRequest(async (req, res) => {
         if (dateCheckouts.length > 0) {
           dateMessage += `*ВИЇЗДИ (Прибирання до 15:00):*\n`;
           for (const checkout of dateCheckouts) {
-            dateMessage += `🔴 ID ${checkout.reservation_id}\n`;
+            dateMessage += `🔴 ID ${checkout.apartment_id}\n`;
             dateMessage += `🏠 ${checkout.apartment_address}\n`;
             dateMessage += `👤 ${checkout.guest_name} - Виїзджає о 12:00\n`;
             dateMessage += `📞 ${checkout.guest_contact}\n\n`;
@@ -178,7 +182,7 @@ exports.telegramWebhook = onRequest(async (req, res) => {
         if (dateCheckins.length > 0) {
           dateMessage += `*ЗАЇЗДИ (Квартира має бути готова):*\n`;
           for (const checkin of dateCheckins) {
-            dateMessage += `🟢 ID ${checkin.reservation_id}\n`;
+            dateMessage += `🟢 ID ${checkin.apartment_id}\n`;
             dateMessage += `🏠 ${checkin.apartment_address}\n`;
             dateMessage += `👤 ${checkin.guest_name} - Заїзджає після 15:00\n`;
             dateMessage += `📞 ${checkin.guest_contact}\n\n`;
