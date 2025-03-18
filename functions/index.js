@@ -1,11 +1,11 @@
 // The Cloud Functions for Firebase SDK to create Cloud Functions and triggers.
-const {logger} = require("firebase-functions");
-const {onRequest} = require("firebase-functions/v2/https");
-const {onSchedule} = require("firebase-functions/v2/scheduler");
+const { logger } = require("firebase-functions");
+const { onRequest } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 
 // The Firebase Admin SDK to access Firestore.
-const {initializeApp} = require("firebase-admin/app");
-const {getFirestore} = require("firebase-admin/firestore");
+const { initializeApp } = require("firebase-admin/app");
+const { getFirestore } = require("firebase-admin/firestore");
 const axios = require("axios");
 
 // Initialize Firebase
@@ -141,13 +141,11 @@ exports.telegramWebhook = onRequest(async (req, res) => {
         // For non-admin users, filter by assigned apartments
         if (!isAdmin) {
           dateCheckouts = dateCheckouts.filter(checkout => {
-            // Convert apartment_id to string for comparison
             const checkoutApartmentId = String(checkout.apartment_id);
             return assignedApartments.includes(checkoutApartmentId);
           });
           
           dateCheckins = dateCheckins.filter(checkin => {
-            // Convert apartment_id to string for comparison
             const checkinApartmentId = String(checkin.apartment_id);
             return assignedApartments.includes(checkinApartmentId);
           });
@@ -164,32 +162,32 @@ exports.telegramWebhook = onRequest(async (req, res) => {
         const [year, month, day] = date.split('-');
         const formattedDate = `${day}.${month}.${year}`;
         
-        // Create date header message
-        let dateMessage = `📅 *${formattedDate}*\n\n`;
+        // Create a decorated date header message with extra spacing
+        let dateMessage = `\n\n📅 *${formattedDate}* 📅\n\n====================\n\n`;
         
-        // Add checkouts
+        // Add decorated checkouts section
         if (dateCheckouts.length > 0) {
-          dateMessage += `*ВИЇЗДИ (Прибирання до 15:00):*\n`;
+          dateMessage += `🔥 *ВИЇЗДИ (Прибирання до 14:00):* 🔥\n\n`;
           for (const checkout of dateCheckouts) {
-            dateMessage += `🔴 ID ${checkout.apartment_id}\n`;
-            dateMessage += `🏠 ${checkout.apartment_address}\n`;
-            dateMessage += `👤 ${checkout.guest_name} - Виїзджає о 12:00\n`;
-            dateMessage += `📞 ${checkout.guest_contact}\n\n`;
+            dateMessage += `🔴 *ID:* ${checkout.apartment_id}\n`;
+            dateMessage += `🏠 *Aдреса:* ${checkout.apartment_address}\n`;
+            dateMessage += `👤 *Гість:* ${checkout.guest_name} - Виїзд о 12:00\n`;
+            dateMessage += `📞 *Контакти:* ${checkout.guest_contact}\n\n`;
           }
         }
         
-        // Add checkins
+        // Add decorated checkins section
         if (dateCheckins.length > 0) {
-          dateMessage += `*ЗАЇЗДИ (Квартира має бути готова):*\n`;
+          dateMessage += `✨ *ЗАЇЗДИ (Квартира має бути готова):* ✨\n\n`;
           for (const checkin of dateCheckins) {
-            dateMessage += `🟢 ID ${checkin.apartment_id}\n`;
-            dateMessage += `🏠 ${checkin.apartment_address}\n`;
-            dateMessage += `👤 ${checkin.guest_name} - Заїзджає після 15:00\n`;
-            dateMessage += `📞 ${checkin.guest_contact}\n\n`;
+            dateMessage += `🟢 *ID:* ${checkin.apartment_id}\n`;
+            dateMessage += `🏠 *Aдреса:* ${checkin.apartment_address}\n`;
+            dateMessage += `👤 *Гість:* ${checkin.guest_name} - Заїзд після 14:00\n`;
+            dateMessage += `📞 *Контакти:* ${checkin.guest_contact}\n\n`;
           }
         }
         
-        // Send the message for this date
+        // Send the decorated message for this date
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
           chat_id: chatId,
           text: dateMessage,
@@ -200,7 +198,7 @@ exports.telegramWebhook = onRequest(async (req, res) => {
       if (!hasAnyTasks) {
         const message = isAdmin ? 
           "Немає жодних заїздів або виїздів на найближчі дні." :
-          "В тебе немає жодних квартир на прибирирання на найближчі дні.";
+          "Наразі немає квартир для прибирирання. Перевірте бота пізніше";
         
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
           chat_id: chatId,
