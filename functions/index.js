@@ -316,67 +316,108 @@ async function processTextMessage(text, userId) {
     1. Check for conflicts with other bookings on the same day
     2. Consider the entire day's schedule (checkout -> cleaning -> checkin)
     3. Ensure there's enough time between events
-    4. If a time change would cause conflicts, suggest an alternative time
+    4. If a time change would cause conflicts, return validation error
     5. For same-day check-in/check-out, maintain proper sequence
     6. Consider cleaner's schedule and physical constraints
     
-    When identifying bookings, follow these rules in order:
-    1. Match by explicit identifiers first:
-       - Full apartment ID (e.g., "598")
-       - Full address (e.g., "Baseina")
-       - Full guest name (e.g., "Гусак")
-       - Full date in DD.MM.YYYY or DD.MM format (e.g., "30.03" or "30.03.2024")
+    Validation rules:
+    1. For check-ins:
+       - Time must be strictly after 14:00 (e.g., 14:30, 15:00, 16:00)
+       - 14:00 is not allowed
+       - Times before 14:00 are invalid
+    2. For check-outs:
+       - Time must be before 14:00
+       - Times after 14:00 are invalid
+    3. For cleaning:
+       - Must be after checkout time
+       - Must be finished by 14:00
+       - Minimum 30 minutes after checkout
     
-    2. If no explicit match, try partial matches:
-       - Partial apartment ID (e.g., "59" matches "598")
-       - Partial address (e.g., "Base" matches "Baseina")
-       - Partial guest name (e.g., "Гус" matches "Гусак")
-       - Partial date (e.g., "30" matches "30.03")
+    When validating times:
+    1. First check if the time format is correct (HH:00)
+    2. Then check if the time meets the basic rules (before/after 14:00)
+    3. Finally check for conflicts with other bookings
+    4. If any validation fails, set isValid to false and include the error
+    5. If all validations pass, set isValid to true and proceed with the change
     
-    3. If multiple matches found:
-       - If dates differ: Require explicit date specification
-       - If same date but different apartments: Require explicit apartment ID/address
-       - If same apartment but different dates: Require explicit date
-       - If same guest but different dates: Require explicit date
-       - If same guest but different apartments: Require explicit apartment ID/address
+    IMPORTANT: Validation Response Format Rules:
+    1. NEVER include validation errors if isValid is true
+    2. NEVER set isValid to true if there are validation errors
+    3. NEVER include conflicts if isValid is true
+    4. For check-ins after 14:00:
+       - Set isValid to true
+       - Do not include any errors
+       - Do not include any conflicts
+    5. For check-ins at or before 14:00:
+       - Set isValid to false
+       - Include error: "Час заїзду повинен бути строго після 14:00"
+    6. For check-outs before 14:00:
+       - Set isValid to true
+       - Do not include any errors
+       - Do not include any conflicts
+    7. For check-outs at or after 14:00:
+       - Set isValid to false
+       - Include error: "Час виїзду повинен бути до 14:00"
     
-    4. For ambiguous cases:
-       - Prefer the most recently mentioned booking in the conversation
-       - If no recent context, prefer the nearest date
-       - If dates are equal, prefer the most recently updated booking
-       - If multiple apartments have same-day events, prefer the one with the most recent activity
+    Example validations:
+    1. Check-in at 15:00 -> Valid (after 14:00)
+       {
+         "validation": {
+           "isValid": true,
+           "errors": [],
+           "conflicts": []
+         }
+       }
+    2. Check-in at 14:00 -> Invalid (must be after 14:00)
+       {
+         "validation": {
+           "isValid": false,
+           "errors": ["Час заїзду повинен бути строго після 14:00"],
+           "conflicts": []
+         }
+       }
+    3. Check-in at 13:00 -> Invalid (before 14:00)
+       {
+         "validation": {
+           "isValid": false,
+           "errors": ["Час заїзду повинен бути строго після 14:00"],
+           "conflicts": []
+         }
+       }
+    4. Check-out at 12:00 -> Valid (before 14:00)
+       {
+         "validation": {
+           "isValid": true,
+           "errors": [],
+           "conflicts": []
+         }
+       }
+    5. Check-out at 14:00 -> Invalid (must be before 14:00)
+       {
+         "validation": {
+           "isValid": false,
+           "errors": ["Час виїзду повинен бути до 14:00"],
+           "conflicts": []
+         }
+       }
+    6. Check-out at 15:00 -> Invalid (after 14:00)
+       {
+         "validation": {
+           "isValid": false,
+           "errors": ["Час виїзду повинен бути до 14:00"],
+           "conflicts": []
+         }
+       }
     
-    5. Special cases to handle:
-       - Multiple bookings for same apartment on different dates
-       - Multiple bookings for same guest on different dates
-       - Multiple bookings for same address on different dates
-       - Multiple bookings on same date for different apartments
-       - Bookings with similar names/addresses
-       - Bookings with similar IDs
-       - Bookings with dates in different formats
-       - Multiple changes in one request
-       - Time ranges instead of specific times
-       - Relative date references
-    
-    6. Understanding the current tasks list:
-       - The currentTasks array contains ONLY the bookings assigned to the user
-       - These are filtered by:
-         * User's assigned apartment IDs
-         * Date range (today to +10 days)
-         * User's access level (admin or cleaner)
-       - If a booking appears in currentTasks, the user has permission to modify it
-       - When user's request is unclear, prefer bookings from today's date in currentTasks
-       - If multiple matches exist, prioritize:
-         1. Today's bookings from currentTasks
-         2. Future bookings from currentTasks
-         3. Other bookings that match the criteria
-    
-    7. When user's request is unclear:
-       - If no specific apartment/guest is mentioned, return null for targetBooking
-       - If multiple possible matches exist, include them in ambiguousMatches
-       - If specific information is missing, include it in clarificationNeeded
-       - Always provide clear, user-friendly messages explaining what information is needed
-       - Show available options from currentTasks first, especially for today's date
+    When returning validation results:
+    1. If the time is valid:
+       - Set isValid to true
+       - Do not include any errors
+       - Do not include any conflicts
+    2. If the time is invalid:
+       - Set isValid to false
+       - Include specific error messages
+       - Include any relevant conflicts
     
     Previous conversation context:
     ${JSON.stringify(context, null, 2)}
@@ -409,8 +450,7 @@ async function processTextMessage(text, userId) {
             "time": string,
             "description": string (in Ukrainian)
           }
-        ],
-        "suggestedAlternative": string // Alternative time if current suggestion has conflicts
+        ]
       },
       "ambiguousMatches": [ // Only included if multiple bookings match without unique identifier
         {
@@ -432,8 +472,6 @@ async function processTextMessage(text, userId) {
           }
         ]
       },
-      "requiresConfirmation": boolean, // Whether to ask for confirmation
-      "confirmationMessage": string (in Ukrainian), // Message to show for confirmation
       "multipleChanges": [ // Array of changes if multiple changes requested
         {
           "changeType": "cleaning" | "checkin" | "checkout",
@@ -455,8 +493,7 @@ async function processTextMessage(text, userId) {
                 "time": string,
                 "description": string (in Ukrainian)
               }
-            ],
-            "suggestedAlternative": string
+            ]
           }
         }
       ]
@@ -487,8 +524,8 @@ async function processTextMessage(text, userId) {
     5. "постав прибирання на 11:30" -> Check minimum 30 minutes after checkout
     
     Conflict resolution:
-    1. If a time change would cause conflicts, suggest an alternative time
-    2. Consider the entire day's schedule when suggesting alternatives
+    1. If a time change would cause conflicts, return validation error
+    2. Consider the entire day's schedule when validating
     3. Maintain minimum time gaps between events
     4. Prioritize guest convenience while ensuring cleaning can be completed
     5. Consider cleaner's physical constraints and schedule
@@ -522,7 +559,7 @@ async function processTextMessage(text, userId) {
         parsed.requiresConfirmation = false;
       }
 
-      if (parsed.ambiguousMatches?.length > 0 || parsed.clarificationNeeded) {
+      if (parsed.ambiguousMatches?.length > 0 || Object.keys(parsed.clarificationNeeded || {})?.length > 0) {
         logger.info('Multiple bookings matched or clarification needed');
         
         let message = "Будь ласка, уточніть деталі для завдання:\n";
@@ -617,7 +654,7 @@ async function updateCleaningTime(userId, analysis) {
       };
     }
 
-    // If validation is false, don't proceed to confirmation
+    // If validation is false, don't proceed
     if (!analysis.validation?.isValid) {
       logger.warn(`Invalid time change request: ${analysis.validation.errors.join(', ')}`);
       
@@ -630,27 +667,13 @@ async function updateCleaningTime(userId, analysis) {
           `• ${c.type === 'checkin' ? 'Заїзд' : c.type === 'checkout' ? 'Виїзд' : 'Прибирання'} о ${c.time}: ${c.description}`
         ).join('\n');
         message += "Не можна встановити цей час через конфлікти:\n" + conflictMsgs;
-        
-        if (analysis.validation.suggestedAlternative) {
-          message += `\n\nРекомендований час: ${analysis.validation.suggestedAlternative}`;
-        }
       } else if (analysis.validation.errors?.length > 0) {
         message += "Помилки валідації:\n" + analysis.validation.errors.join('\n');
       }
       
-      // Force requiresConfirmation to false if invalid
       return {
         success: false,
         message
-      };
-    }
-
-    // If we have a valid change but need confirmation => user must type "Так" or "Ні"
-    if (analysis.requiresConfirmation) {
-      return {
-        success: false,
-        message: analysis.confirmationMessage,
-        requiresConfirmation: true
       };
     }
 
@@ -1089,29 +1112,7 @@ exports.telegramWebhook = onRequest(async (req, res) => {
             return res.status(200).send({ success: true });
           }
 
-          // If requires confirmation, store pendingChange
-          if (analysis.requiresConfirmation) {
-            logger.info(`Requesting confirmation: ${analysis.confirmationMessage}`);
-            const state = await getConversationState(userId);
-            const ctx = state?.lastContext || {};
-
-            await updateConversationState(userId, {
-              lastMessage: text,
-              lastContext: {
-                ...ctx,
-                pendingChange: analysis,
-                requiresConfirmation: true
-              }
-            });
-
-            await axios.post(`${TELEGRAM_API}/sendMessage`, {
-              chat_id: chatId,
-              text: analysis.confirmationMessage
-            });
-            return res.status(200).send({ success: true });
-          }
-
-          // 4) If we have a valid target booking and no confirmation needed
+          // 4) If we have a valid target booking
           try {
             // Check user has access
             const userDocRef = db.collection('users').doc(String(userId));
@@ -1163,16 +1164,6 @@ exports.telegramWebhook = onRequest(async (req, res) => {
               const result = await updateCleaningTime(userId, analysis);
 
               logger.info('Time change result:', result);
-
-              // Check if user is in confirmation mode
-              const cstate = await getConversationState(userId);
-              const ctx = cstate?.lastContext || {};
-
-              if (ctx.requiresConfirmation && ctx.pendingChange) {
-                // The user typed the original text again or something. 
-                // Typically you'd do the "Tak/Ni" logic here, but let's skip 
-                // since we forced invalid = no confirmation.
-              }
 
               let message = result.message;
               if (!result.success && analysis.reasoning) {
