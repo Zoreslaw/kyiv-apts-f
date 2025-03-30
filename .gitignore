@@ -64,6 +64,6 @@ node_modules/
 
 # dotenv environment variables file
 .env
-
+.env.kyiv-apts-f
 # dataconnect generated files
 .dataconnect
