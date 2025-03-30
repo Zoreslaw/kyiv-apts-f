@@ -248,6 +248,22 @@ async function processTextMessage(text, userId) {
       return null;
     }
 
+    // Get user's assigned apartments
+    const userDoc = await db.collection('users').doc(String(userId)).get();
+    const userData = userDoc.data();
+    const isAdmin = userData?.type === 'admin';
+    
+    let assignedApartments = [];
+    if (!isAdmin) {
+      const assignmentDocs = await db.collection('cleaningAssignments')
+        .where('userId', '==', String(userId))
+        .get();
+      
+      if (!assignmentDocs.empty) {
+        assignedApartments = assignmentDocs.docs[0].data().apartmentId || [];
+      }
+    }
+
     const today = getKievDate(0);
     const maxDate = getKievDate(10);
 
@@ -257,22 +273,28 @@ async function processTextMessage(text, userId) {
       .orderBy('date')
       .get();
 
+    // Filter bookings based on user permissions
     const currentTasks = [];
     bookingsSnapshot.forEach(doc => {
       const b = doc.data();
-      currentTasks.push({
-        id: doc.id,
-        ...b,
-        checkoutTimeDisplay: b.type === 'checkout' ? b.checkoutTime : null,
-        checkinTimeDisplay: b.type === 'checkin' ? b.checkinTime : null,
-        cleaningTimeDisplay: b.cleaningTime || 'не призначено'
-      });
+      // Only include bookings for apartments the user has access to
+      if (isAdmin || assignedApartments.includes(String(b.apartmentId))) {
+        currentTasks.push({
+          id: doc.id,
+          ...b,
+          checkoutTimeDisplay: b.type === 'checkout' ? b.checkoutTime : null,
+          checkinTimeDisplay: b.type === 'checkin' ? b.checkinTime : null,
+          cleaningTimeDisplay: b.cleaningTime || 'не призначено'
+        });
+      }
     });
 
-    logger.info(`Found ${currentTasks.length} upcoming tasks for analysis`);
+    logger.info(`Found ${currentTasks.length} upcoming tasks for analysis (filtered by user permissions)`);
 
     const systemMsg = `You are a booking schedule assistant for an apartment rental service.
 You need to analyze the user's message and the current tasks to determine what changes are requested.
+
+IMPORTANT: All reasoning and messages must be in Ukrainian language.
 
 Important rules about times:
 1. For check-outs:
@@ -322,6 +344,7 @@ When identifying bookings, follow these rules in order:
    - Prefer the most recently mentioned booking in the conversation
    - If no recent context, prefer the nearest date
    - If dates are equal, prefer the most recently updated booking
+   - If multiple apartments have same-day events, prefer the one with the most recent activity
 
 5. Special cases to handle:
    - Multiple bookings for same apartment on different dates
@@ -335,10 +358,32 @@ When identifying bookings, follow these rules in order:
    - Time ranges instead of specific times
    - Relative date references
 
+6. Understanding the current tasks list:
+   - The currentTasks array contains ONLY the bookings assigned to the user
+   - These are filtered by:
+     * User's assigned apartment IDs
+     * Date range (today to +10 days)
+     * User's access level (admin or cleaner)
+   - If a booking appears in currentTasks, the user has permission to modify it
+   - When user's request is unclear, prefer bookings from today's date in currentTasks
+   - If multiple matches exist, prioritize:
+     1. Today's bookings from currentTasks
+     2. Future bookings from currentTasks
+     3. Other bookings that match the criteria
+
+7. When user's request is unclear:
+   - If no specific apartment/guest is mentioned, return null for targetBooking
+   - If multiple possible matches exist, include them in ambiguousMatches
+   - If specific information is missing, include it in clarificationNeeded
+   - Always provide clear, user-friendly messages explaining what information is needed
+   - Show available options from currentTasks first, especially for today's date
+
 Previous conversation context:
 ${JSON.stringify(context, null, 2)}
 
-Here are current tasks (limited to the next 10 days):
+User's assigned apartment IDs: ${isAdmin ? 'ALL (admin user)' : assignedApartments.join(', ')}
+
+Here are current tasks (limited to the next 10 days, filtered by user permissions):
 ${JSON.stringify(currentTasks, null, 2)}
 
 Analyze the user message and produce valid JSON with the format:
@@ -354,15 +399,15 @@ Analyze the user message and produce valid JSON with the format:
     "guestName": string
   },
   "suggestedTime": string (HH:00),
-  "reasoning": string,
+  "reasoning": string (in Ukrainian),
   "validation": {
     "isValid": boolean,
-    "errors": string[], // List of validation errors if any
+    "errors": string[], // List of validation errors if any (in Ukrainian)
     "conflicts": [ // List of potential conflicts
       {
         "type": "checkin" | "checkout" | "cleaning",
         "time": string,
-        "description": string
+        "description": string (in Ukrainian)
       }
     ],
     "suggestedAlternative": string // Alternative time if current suggestion has conflicts
@@ -378,8 +423,8 @@ Analyze the user message and produce valid JSON with the format:
     }
   ],
   "clarificationNeeded": { // Only included if more information is needed
-    "type": "date" | "apartment" | "guest", // What information is missing
-    "message": string, // User-friendly message explaining what's needed
+    "type": "date" | "apartment" | "guest" | "time", // What information is missing
+    "message": string (in Ukrainian), // User-friendly message explaining what's needed
     "availableOptions": [ // Available options for the missing information
       {
         "value": string,
@@ -388,7 +433,7 @@ Analyze the user message and produce valid JSON with the format:
     ]
   },
   "requiresConfirmation": boolean, // Whether to ask for confirmation
-  "confirmationMessage": string, // Message to show for confirmation
+  "confirmationMessage": string (in Ukrainian), // Message to show for confirmation
   "multipleChanges": [ // Array of changes if multiple changes requested
     {
       "changeType": "cleaning" | "checkin" | "checkout",
@@ -408,7 +453,7 @@ Analyze the user message and produce valid JSON with the format:
           {
             "type": "checkin" | "checkout" | "cleaning",
             "time": string,
-            "description": string
+            "description": string (in Ukrainian)
           }
         ],
         "suggestedAlternative": string
@@ -418,10 +463,10 @@ Analyze the user message and produce valid JSON with the format:
 }
 
 Example user messages and how to handle them:
-1. "зміни час гусак на 13" -> Match guest name "Гусак"
+1. "зміни час гусак на 13" -> Match guest name "Гусак" from currentTasks
 2. "постав прибирання на 12" -> If multiple dates exist, require date specification
-3. "зміни заїзд baseina на 15" -> Match by address "Baseina"
-4. "встанови виїзд 598 на 11" -> Match by ID "598"
+3. "зміни заїзд baseina на 15" -> Match by address "Baseina" from currentTasks
+4. "встанови виїзд 598 на 11" -> Match by ID "598" from currentTasks
 5. "постав прибирання на 12:00 30.03" -> Match by date "30.03"
 6. "постав прибирання на 12:00 для 598" -> Match by ID "598"
 7. "постав прибирання на 12:00 для гостя Гусак" -> Match by guest name "Гусак"
@@ -430,6 +475,9 @@ Example user messages and how to handle them:
 10. "постав прибирання між 10:00 та 12:00" -> Handle time range
 11. "зміни виїзд на 11:00 і прибирання на 12:00" -> Handle multiple changes
 12. "постав прибирання на 12:00 в понеділок" -> Handle day name
+13. "зміни час на 14" -> Return null targetBooking and clarificationNeeded with today's options
+14. "постав прибирання на 12" -> Return null targetBooking and clarificationNeeded with today's options
+15. "зміни заїзд на 15" -> Return null targetBooking and clarificationNeeded with today's options
 
 Validation examples:
 1. "встанови виїзд на 15:00" -> Invalid: checkout must be before 14:00
@@ -448,7 +496,7 @@ Conflict resolution:
 IMPORTANT: Return ONLY the JSON object, no markdown formatting or code blocks.`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemMsg },
         { role: "user", content: text }
@@ -487,6 +535,13 @@ IMPORTANT: Return ONLY the JSON object, no markdown formatting or code blocks.`;
               `${opt.display} (${opt.value})`
             ).join('\n');
             message += `Доступні гості:\n${guests}`;
+          } else if (type === 'time') {
+            const times = availableOptions.map(opt => opt.display).join(', ');
+            message += `Доступні часи: ${times}`;
+          }
+          
+          if (clarificationMsg) {
+            message += `\n\n${clarificationMsg}`;
           }
         } else {
           // Fallback for ambiguous matches
@@ -560,27 +615,40 @@ async function updateCleaningTime(userId, analysis) {
     if (!analysis.validation?.isValid) {
       logger.warn(`Invalid time change request: ${analysis.validation.errors.join(', ')}`);
       
+      let message = "";
+      
+      // Show the main reasoning if available
+      if (analysis.reasoning) {
+        message += `${analysis.reasoning}\n\n`;
+      }
+      
       // If there are conflicts, show them and suggest alternatives
       if (analysis.validation.conflicts?.length > 0) {
         const conflictMessages = analysis.validation.conflicts.map(c => 
           `• ${c.type === 'checkin' ? 'Заїзд' : c.type === 'checkout' ? 'Виїзд' : 'Прибирання'} о ${c.time}: ${c.description}`
         ).join('\n');
 
-        let message = "Не можна встановити цей час через конфлікти:\n" + conflictMessages;
+        message += "Не можна встановити цей час через конфлікти:\n" + conflictMessages;
         
         if (analysis.validation.suggestedAlternative) {
           message += `\n\nРекомендований час: ${analysis.validation.suggestedAlternative}`;
         }
-        
-        return {
-          success: false,
-          message: message
-        };
+      } else if (analysis.validation.errors?.length > 0) {
+        message += "Помилки валідації:\n" + analysis.validation.errors.join('\n');
       }
-
+      
       return {
         success: false,
-        message: analysis.validation.errors.join('\n')
+        message: message
+      };
+    }
+
+    // If we have a valid change but need confirmation
+    if (analysis.requiresConfirmation) {
+      return {
+        success: false,
+        message: analysis.confirmationMessage,
+        requiresConfirmation: true
       };
     }
 
@@ -801,34 +869,34 @@ async function handleGetMyTasks(chatId) {
 
     if (userDoc.empty) {
       logger.warn(`User not found for chat ID ${chatId}`);
-      await axios.post(`${TELEGRAM_API}/sendMessage`, {
-        chat_id: chatId,
-        text: "Ти не зареєстрований у системі. Будь ласка, скористайся командою /start."
-      });
-      return;
-    }
-
+        await axios.post(`${TELEGRAM_API}/sendMessage`, {
+          chat_id: chatId,
+          text: "Ти не зареєстрований у системі. Будь ласка, скористайся командою /start."
+        });
+        return;
+      }
+      
     const userData = userDoc.docs[0].data();
     const userId = userData.userId;
-    const isAdmin = userData.type === 'admin';
+      const isAdmin = userData.type === 'admin';
     logger.info(`User ${userId} is ${isAdmin ? 'admin' : 'cleaner'}`);
-
-    let assignedApartments = [];
-    if (!isAdmin) {
+      
+      let assignedApartments = [];
+      if (!isAdmin) {
       const assignmentDocs = await db.collection('cleaningAssignments')
-        .where('userId', '==', userId.toString())
-        .get();
-
+          .where('userId', '==', userId.toString())
+          .get();
+        
       if (!assignmentDocs.empty) {
         assignedApartments = assignmentDocs.docs[0].data().apartmentId || [];
       }
-      if (assignedApartments.length === 0) {
+        if (assignedApartments.length === 0) {
         logger.warn(`No apartments assigned to user ${userId}`);
-        await axios.post(`${TELEGRAM_API}/sendMessage`, {
-          chat_id: chatId,
-          text: "На тебе не додано жодних квартир. :("
-        });
-        return;
+          await axios.post(`${TELEGRAM_API}/sendMessage`, {
+            chat_id: chatId,
+            text: "На тебе не додано жодних квартир. :("
+          });
+          return;
       }
     }
 
@@ -859,18 +927,18 @@ async function handleGetMyTasks(chatId) {
     }
 
     const allDates = Object.keys(grouped).sort();
-    if (allDates.length === 0) {
+      if (allDates.length === 0) {
       logger.info(`No tasks found for user ${userId}`);
-      await axios.post(`${TELEGRAM_API}/sendMessage`, {
-        chat_id: chatId,
-        text: "Немає даних про заїзди або виїзди на найближчі дні."
-      });
-      return;
-    }
-
-    let hasAnyTasks = false;
-
-    for (const date of allDates) {
+        await axios.post(`${TELEGRAM_API}/sendMessage`, {
+          chat_id: chatId,
+          text: "Немає даних про заїзди або виїзди на найближчі дні."
+        });
+        return;
+      }
+      
+      let hasAnyTasks = false;
+      
+      for (const date of allDates) {
       const { checkouts, checkins } = grouped[date];
       if (checkouts.length === 0 && checkins.length === 0) continue;
       hasAnyTasks = true;
@@ -916,14 +984,14 @@ async function handleGetMyTasks(chatId) {
         }
       }
 
-      await axios.post(`${TELEGRAM_API}/sendMessage`, {
-        chat_id: chatId,
+        await axios.post(`${TELEGRAM_API}/sendMessage`, {
+          chat_id: chatId,
         text: msg,
-        parse_mode: 'Markdown'
-      });
-    }
-
-    if (!hasAnyTasks) {
+          parse_mode: 'Markdown'
+        });
+      }
+      
+      if (!hasAnyTasks) {
       const msg = isAdmin
         ? "Немає жодних заїздів або виїздів на найближчі дні."
         : "Наразі немає квартир для прибирання. Перевір пізніше.";
@@ -1030,6 +1098,45 @@ exports.telegramWebhook = onRequest(async (req, res) => {
             break;
           }
 
+          // If no target booking found, prompt user for clarification
+          if (!analysis.targetBooking) {
+            logger.info('No target booking identified. Asking for clarification.');
+            
+            let message = "Будь ласка, уточніть деталі для завдання:\n";
+            
+            if (analysis.clarificationNeeded) {
+              const { type, message: clarificationMsg, availableOptions } = analysis.clarificationNeeded;
+              
+              if (type === 'date') {
+                const dates = availableOptions.map(opt => opt.display).join(', ');
+                message += `Доступні дати: ${dates}`;
+              } else if (type === 'apartment') {
+                const apartments = availableOptions.map(opt => 
+                  `ID: ${opt.value} - ${opt.display}`
+                ).join('\n');
+                message += `Доступні квартири:\n${apartments}`;
+              } else if (type === 'guest') {
+                const guests = availableOptions.map(opt => 
+                  `${opt.display} (${opt.value})`
+                ).join('\n');
+                message += `Доступні гості:\n${guests}`;
+              } else if (type === 'time') {
+                const times = availableOptions.map(opt => opt.display).join(', ');
+                message += `Доступні часи: ${times}`;
+              }
+              
+              if (clarificationMsg) {
+                message += `\n\n${clarificationMsg}`;
+              }
+            }
+            
+            await axios.post(`${TELEGRAM_API}/sendMessage`, {
+              chat_id: chatId,
+              text: message
+            });
+            break;
+          }
+
           try {
             // Check if user have apartments ids
             const userDocRef = db.collection('users').doc(String(userId));
@@ -1052,8 +1159,16 @@ exports.telegramWebhook = onRequest(async (req, res) => {
                 .where('userId', '==', String(userId))
                 .get();
 
-              if (assignmentDocs.empty || !assignmentDocs.docs[0].data().apartmentId?.includes(analysis.targetBooking.apartmentId)) {
-                logger.warn(`User ${userId} attempted to access unauthorized apartment ${analysis.targetBooking.apartmentId}`);
+              // Get the user's assigned apartments
+              const assignedApartments = assignmentDocs.empty ? [] : 
+                assignmentDocs.docs[0].data().apartmentId || [];
+
+              // Convert both to strings for comparison
+              const targetApartmentId = String(analysis.targetBooking.apartmentId);
+              const hasAccess = assignedApartments.includes(targetApartmentId);
+
+              if (!hasAccess) {
+                logger.warn(`User ${userId} attempted to access unauthorized apartment ${targetApartmentId}. User's assigned apartments: ${assignedApartments.join(', ')}`);
                 await axios.post(`${TELEGRAM_API}/sendMessage`, {
                   chat_id: chatId,
                   text: "У вас немає доступу до цієї квартири."
@@ -1079,10 +1194,128 @@ exports.telegramWebhook = onRequest(async (req, res) => {
               const result = await updateCleaningTime(userId, analysis);
 
               logger.info('Time change result:', result);
+              
+              // Check if this is a confirmation response
+              if (context.requiresConfirmation && context.pendingChange) {
+                const text_lower = text.toLowerCase().trim();
+                
+                // Define exact words for confirmation and cancellation
+                const confirmationWords = new Set([
+                  "так",
+                  "ok",
+                  "підтверджую",
+                  "підтвердити",
+                  "підтвердження",
+                  "підтвердити зміну",
+                  "так, підтверджую",
+                  "підтверджую зміну",
+                  "так, змінити",
+                  "змінити",
+                  "встановити",
+                  "встановити час",
+                  "підтвердити час",
+                  "yes",
+                  "confirm",
+                  "confirmed",
+                  "approve",
+                  "approved"
+                ]);
+
+                const cancellationWords = new Set([
+                  "ні",
+                  "ні, скасувати",
+                  "скасувати",
+                  "відмінити",
+                  "відміна",
+                  "відмінити зміну",
+                  "скасувати зміну",
+                  "не змінювати",
+                  "не підтверджую",
+                  "відхилити",
+                  "відхилити зміну",
+                  "no",
+                  "cancel",
+                  "cancelled",
+                  "reject",
+                  "rejected",
+                  "deny",
+                  "denied"
+                ]);
+
+                if (confirmationWords.has(text_lower)) {
+                  logger.info(`User ${userId} confirmed pending change`);
+                  // Process the confirmed change
+                  const result = await updateCleaningTime(userId, context.pendingChange);
+                  
+                  // Clear the pending change from conversation state
+                  await updateConversationState(userId, {
+                    lastMessage: text,
+                    lastContext: {
+                      ...context,
+                      pendingChange: null,
+                      requiresConfirmation: false
+                    }
+                  });
+
+                  // Send the result message
+                  await axios.post(`${TELEGRAM_API}/sendMessage`, {
+                    chat_id: chatId,
+                    text: result.message,
+                    reply_markup: mainMenuKeyboard
+                  });
+                  break;
+                } else if (cancellationWords.has(text_lower)) {
+                  // Handle cancellation
+                  await updateConversationState(userId, {
+                    lastMessage: text,
+                    lastContext: {
+                      ...context,
+                      pendingChange: null,
+                      requiresConfirmation: false
+                    }
+                  });
+                  await axios.post(`${TELEGRAM_API}/sendMessage`, {
+                    chat_id: chatId,
+                    text: "Зміну скасовано.",
+                    reply_markup: mainMenuKeyboard
+                  });
+                  break;
+                } else {
+                  // If not a confirmation or cancellation, ignore and continue processing as new message
+                  logger.info(`User ${userId} message not recognized as confirmation/cancellation: "${text}"`);
+                }
+              }
+              
+              // Include reasoning in the message if there are issues
+              let message = result.message;
+              if (!result.success && analysis.reasoning) {
+                message += `\n\nПричина: ${analysis.reasoning}`;
+              }
+              
               await axios.post(`${TELEGRAM_API}/sendMessage`, {
                 chat_id: chatId,
-                text: result.message
+                text: message
               });
+
+              // If there are multiple changes, process them
+              if (analysis.multipleChanges?.length > 0) {
+                for (const change of analysis.multipleChanges) {
+                  const changeResult = await updateCleaningTime(userId, {
+                    ...analysis,
+                    changeType: change.changeType,
+                    targetBooking: change.targetBooking,
+                    suggestedTime: change.suggestedTime,
+                    validation: change.validation
+                  });
+                  
+                  if (!changeResult.success) {
+                    await axios.post(`${TELEGRAM_API}/sendMessage`, {
+                      chat_id: chatId,
+                      text: `Помилка при оновленні другого часу:\n${changeResult.message}`
+                    });
+                  }
+                }
+              }
             }
           } catch (err) {
             logger.error('Error processing time change:', err);
