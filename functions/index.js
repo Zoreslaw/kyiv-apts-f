@@ -185,6 +185,51 @@ function shouldUseOpenAI(text) {
 }
 
 /**
+ * Get or create conversation state for a user
+ * @param {string} userId - Telegram user ID
+ * @returns {Promise<Object>} Conversation state
+ */
+async function getConversationState(userId) {
+  try {
+    const stateRef = db.collection('conversations').doc(userId.toString());
+    const stateDoc = await stateRef.get();
+    
+    if (!stateDoc.exists) {
+      return {
+        lastMessage: null,
+        lastContext: null,
+        partialBooking: null,
+        lastUpdated: new Date(),
+        messageCount: 0
+      };
+    }
+    
+    return stateDoc.data();
+  } catch (error) {
+    logger.error('Error getting conversation state:', error);
+    return null;
+  }
+}
+
+/**
+ * Update conversation state for a user
+ * @param {string} userId - Telegram user ID
+ * @param {Object} state - New conversation state
+ */
+async function updateConversationState(userId, state) {
+  try {
+    const stateRef = db.collection('conversations').doc(userId.toString());
+    await stateRef.set({
+      ...state,
+      lastUpdated: new Date(),
+      messageCount: (state.messageCount || 0) + 1
+    });
+  } catch (error) {
+    logger.error('Error updating conversation state:', error);
+  }
+}
+
+/**
  * Process user text with OpenAI and return structured analysis
  * @param {string} text - User message to process
  * @param {string} userId - Telegram user ID
@@ -193,6 +238,10 @@ function shouldUseOpenAI(text) {
 async function processTextMessage(text, userId) {
   try {
     logger.info(`Processing message from user ${userId}: "${text}"`);
+
+    // Get conversation state
+    const state = await getConversationState(userId);
+    const context = state?.lastContext || {};
 
     if (!shouldUseOpenAI(text)) {
       logger.debug('Message does not require OpenAI processing');
@@ -227,19 +276,67 @@ You need to analyze the user's message and the current tasks to determine what c
 
 Important rules about times:
 1. For check-outs:
-   - Flexible guest check-out time
+   - Guest check-out time must be before 14:00
    - Cleaning must be finished by 14:00
-   - Cleaning cannot start before check-out
+   - If there's a same-day check-in, check-out must be before check-in time
+   - Minimum 30 minutes between checkout and cleaning
 2. For check-ins:
-   - Flexible guest check-in time
+   - Check-in time must be after 14:00
    - No cleaning time for check-ins
+3. Time format must be HH:00 (e.g., 13:00, 14:00)
+4. Date formats to handle:
+   - Explicit dates: "30.03", "30.03.2024", "30/03", "30/03/2024"
+   - Relative dates: "tomorrow", "the day after tomorrow", "next Monday"
+   - Day names: "Monday", "Tuesday", etc.
+   - Day numbers: "1st", "2nd", etc.
 
-When identifying bookings:
-1. Match by guest name (even partial matches like last name only)
-2. Match by apartment ID or address
-3. Consider the context of recent messages
-4. For ambiguous cases, prefer the most recently mentioned booking
-5. For multiple matches, prefer the nearest date
+When analyzing time changes:
+1. Check for conflicts with other bookings on the same day
+2. Consider the entire day's schedule (checkout -> cleaning -> checkin)
+3. Ensure there's enough time between events
+4. If a time change would cause conflicts, suggest an alternative time
+5. For same-day check-in/check-out, maintain proper sequence
+6. Consider cleaner's schedule and physical constraints
+
+When identifying bookings, follow these rules in order:
+1. Match by explicit identifiers first:
+   - Full apartment ID (e.g., "598")
+   - Full address (e.g., "Baseina")
+   - Full guest name (e.g., "Гусак")
+   - Full date in DD.MM.YYYY or DD.MM format (e.g., "30.03" or "30.03.2024")
+
+2. If no explicit match, try partial matches:
+   - Partial apartment ID (e.g., "59" matches "598")
+   - Partial address (e.g., "Base" matches "Baseina")
+   - Partial guest name (e.g., "Гус" matches "Гусак")
+   - Partial date (e.g., "30" matches "30.03")
+
+3. If multiple matches found:
+   - If dates differ: Require explicit date specification
+   - If same date but different apartments: Require explicit apartment ID/address
+   - If same apartment but different dates: Require explicit date
+   - If same guest but different dates: Require explicit date
+   - If same guest but different apartments: Require explicit apartment ID/address
+
+4. For ambiguous cases:
+   - Prefer the most recently mentioned booking in the conversation
+   - If no recent context, prefer the nearest date
+   - If dates are equal, prefer the most recently updated booking
+
+5. Special cases to handle:
+   - Multiple bookings for same apartment on different dates
+   - Multiple bookings for same guest on different dates
+   - Multiple bookings for same address on different dates
+   - Multiple bookings on same date for different apartments
+   - Bookings with similar names/addresses
+   - Bookings with similar IDs
+   - Bookings with dates in different formats
+   - Multiple changes in one request
+   - Time ranges instead of specific times
+   - Relative date references
+
+Previous conversation context:
+${JSON.stringify(context, null, 2)}
 
 Here are current tasks (limited to the next 10 days):
 ${JSON.stringify(currentTasks, null, 2)}
@@ -257,17 +354,101 @@ Analyze the user message and produce valid JSON with the format:
     "guestName": string
   },
   "suggestedTime": string (HH:00),
-  "reasoning": string
+  "reasoning": string,
+  "validation": {
+    "isValid": boolean,
+    "errors": string[], // List of validation errors if any
+    "conflicts": [ // List of potential conflicts
+      {
+        "type": "checkin" | "checkout" | "cleaning",
+        "time": string,
+        "description": string
+      }
+    ],
+    "suggestedAlternative": string // Alternative time if current suggestion has conflicts
+  },
+  "ambiguousMatches": [ // Only included if multiple bookings match without unique identifier
+    {
+      "id": string,
+      "type": "checkin" | "checkout",
+      "date": "YYYY-MM-DD",
+      "apartmentId": string,
+      "address": string,
+      "guestName": string
+    }
+  ],
+  "clarificationNeeded": { // Only included if more information is needed
+    "type": "date" | "apartment" | "guest", // What information is missing
+    "message": string, // User-friendly message explaining what's needed
+    "availableOptions": [ // Available options for the missing information
+      {
+        "value": string,
+        "display": string
+      }
+    ]
+  },
+  "requiresConfirmation": boolean, // Whether to ask for confirmation
+  "confirmationMessage": string, // Message to show for confirmation
+  "multipleChanges": [ // Array of changes if multiple changes requested
+    {
+      "changeType": "cleaning" | "checkin" | "checkout",
+      "targetBooking": {
+        "id": string,
+        "type": "checkin" | "checkout",
+        "date": "YYYY-MM-DD",
+        "apartmentId": string,
+        "address": string,
+        "guestName": string
+      },
+      "suggestedTime": string,
+      "validation": {
+        "isValid": boolean,
+        "errors": string[],
+        "conflicts": [
+          {
+            "type": "checkin" | "checkout" | "cleaning",
+            "time": string,
+            "description": string
+          }
+        ],
+        "suggestedAlternative": string
+      }
+    }
+  ]
 }
 
 Example user messages and how to handle them:
 1. "зміни час гусак на 13" -> Match guest name "Гусак"
-2. "постав прибирання на 12" -> Use most recently mentioned booking
+2. "постав прибирання на 12" -> If multiple dates exist, require date specification
 3. "зміни заїзд baseina на 15" -> Match by address "Baseina"
-4. "встанови виїзд 598 на 11" -> Match by ID "598"`;
+4. "встанови виїзд 598 на 11" -> Match by ID "598"
+5. "постав прибирання на 12:00 30.03" -> Match by date "30.03"
+6. "постав прибирання на 12:00 для 598" -> Match by ID "598"
+7. "постав прибирання на 12:00 для гостя Гусак" -> Match by guest name "Гусак"
+8. "постав прибирання на 12:00 на Baseina" -> Match by address "Baseina"
+9. "постав прибирання на 12:00 завтра" -> Handle relative date
+10. "постав прибирання між 10:00 та 12:00" -> Handle time range
+11. "зміни виїзд на 11:00 і прибирання на 12:00" -> Handle multiple changes
+12. "постав прибирання на 12:00 в понеділок" -> Handle day name
+
+Validation examples:
+1. "встанови виїзд на 15:00" -> Invalid: checkout must be before 14:00
+2. "постав прибирання на 10:00" -> Check for conflicts with checkout time
+3. "зміни заїзд на 13:00" -> Invalid: check-in must be after 14:00
+4. "встанови виїзд на 12:00" -> Check for same-day check-in conflicts
+5. "постав прибирання на 11:30" -> Check minimum 30 minutes after checkout
+
+Conflict resolution:
+1. If a time change would cause conflicts, suggest an alternative time
+2. Consider the entire day's schedule when suggesting alternatives
+3. Maintain minimum time gaps between events
+4. Prioritize guest convenience while ensuring cleaning can be completed
+5. Consider cleaner's physical constraints and schedule
+
+IMPORTANT: Return ONLY the JSON object, no markdown formatting or code blocks.`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4",
       messages: [
         { role: "system", content: systemMsg },
         { role: "user", content: text }
@@ -276,11 +457,77 @@ Example user messages and how to handle them:
       max_tokens: 500
     });
 
-    const content = completion.choices[0].message.content;
+    const content = completion.choices[0].message.content.trim();
     logger.debug('OpenAI response:', content);
 
     try {
-      const parsed = JSON.parse(content);
+      // Remove any markdown code block formatting if present
+      const cleanContent = content.replace(/```json\n?|\n?```/g, '').trim();
+      const parsed = JSON.parse(cleanContent);
+      
+      // Handle ambiguous matches or clarification needed
+      if (parsed.ambiguousMatches?.length > 0 || parsed.clarificationNeeded) {
+        logger.info('Multiple bookings matched or clarification needed');
+        
+        let message = "Будь ласка, уточніть деталі для завдання:\n";
+        
+        if (parsed.clarificationNeeded) {
+          const { type, message: clarificationMsg, availableOptions } = parsed.clarificationNeeded;
+          
+          if (type === 'date') {
+            const dates = availableOptions.map(opt => opt.display).join(', ');
+            message += `Доступні дати: ${dates}`;
+          } else if (type === 'apartment') {
+            const apartments = availableOptions.map(opt => 
+              `ID: ${opt.value} - ${opt.display}`
+            ).join('\n');
+            message += `Доступні квартири:\n${apartments}`;
+          } else if (type === 'guest') {
+            const guests = availableOptions.map(opt => 
+              `${opt.display} (${opt.value})`
+            ).join('\n');
+            message += `Доступні гості:\n${guests}`;
+          }
+        } else {
+          // Fallback for ambiguous matches
+          const dates = parsed.ambiguousMatches.map(b => {
+            const [yyyy, mm, dd] = b.date.split('-');
+            return `${dd}.${mm}.${yyyy}`;
+          }).join(', ');
+          message += `Доступні дати: ${dates}`;
+        }
+        
+        // Update conversation state with partial information
+        await updateConversationState(userId, {
+          lastMessage: text,
+          lastContext: {
+            ...context,
+            partialBooking: parsed.targetBooking || null,
+            ambiguousMatches: parsed.ambiguousMatches || [],
+            clarificationNeeded: parsed.clarificationNeeded || null
+          }
+        });
+        
+        return {
+          isTimeChange: false,
+          ambiguousMatches: parsed.ambiguousMatches,
+          clarificationNeeded: parsed.clarificationNeeded,
+          message: message
+        };
+      }
+      
+      // If we have a valid change, update conversation state
+      if (parsed.isTimeChange && parsed.targetBooking) {
+        await updateConversationState(userId, {
+          lastMessage: text,
+          lastContext: {
+            lastBooking: parsed.targetBooking,
+            lastChangeType: parsed.changeType,
+            lastSuggestedTime: parsed.suggestedTime
+          }
+        });
+      }
+      
       return parsed;
     } catch (err) {
       logger.warn('OpenAI returned invalid JSON:', err);
@@ -309,6 +556,34 @@ async function updateCleaningTime(userId, analysis) {
       };
     }
 
+    // Check validation from ChatGPT
+    if (!analysis.validation?.isValid) {
+      logger.warn(`Invalid time change request: ${analysis.validation.errors.join(', ')}`);
+      
+      // If there are conflicts, show them and suggest alternatives
+      if (analysis.validation.conflicts?.length > 0) {
+        const conflictMessages = analysis.validation.conflicts.map(c => 
+          `• ${c.type === 'checkin' ? 'Заїзд' : c.type === 'checkout' ? 'Виїзд' : 'Прибирання'} о ${c.time}: ${c.description}`
+        ).join('\n');
+
+        let message = "Не можна встановити цей час через конфлікти:\n" + conflictMessages;
+        
+        if (analysis.validation.suggestedAlternative) {
+          message += `\n\nРекомендований час: ${analysis.validation.suggestedAlternative}`;
+        }
+        
+        return {
+          success: false,
+          message: message
+        };
+      }
+
+      return {
+        success: false,
+        message: analysis.validation.errors.join('\n')
+      };
+    }
+
     logger.info(`Attempting to update booking ${analysis.targetBooking.id} for user ${userId}`);
 
     const bookingRef = db.collection('bookings').doc(analysis.targetBooking.id);
@@ -326,7 +601,7 @@ async function updateCleaningTime(userId, analysis) {
       }
       const booking = bookingDoc.data();
 
-      // Handle each change type with appropriate validation
+      // Handle each change type
       if (analysis.changeType === 'checkin' && booking.type === 'checkin') {
         logger.info(`Updating checkin time for booking ${booking.id}`);
         transaction.update(bookingRef, {
@@ -359,38 +634,6 @@ async function updateCleaningTime(userId, analysis) {
         };
       }
       else if (analysis.changeType === 'checkout' && booking.type === 'checkout') {
-        // Validate new checkout time
-        if (analysis.suggestedTime >= '14:00') {
-          logger.warn(`Invalid checkout time ${analysis.suggestedTime} - must be before 14:00`);
-          return {
-            success: false,
-            message: `Неможливо встановити виїзд о ${analysis.suggestedTime}, оскільки гість має виїхати до 14:00.`
-          };
-        }
-        if (booking.cleaningTime && analysis.suggestedTime > booking.cleaningTime) {
-          logger.warn(`Invalid checkout time ${analysis.suggestedTime} - after cleaning time ${booking.cleaningTime}`);
-          return {
-            success: false,
-            message: `Новий час виїзду ${analysis.suggestedTime} пізніше часу прибирання ${booking.cleaningTime}. Спочатку змініть час прибирання.`
-          };
-        }
-
-        // Check for same-day checkin conflicts
-        if (booking.hasSameDayCheckin) {
-          const checkinRef = db.collection('bookings').doc(`${booking.date}_${booking.apartmentId}_checkin`);
-          const checkinDoc = await transaction.get(checkinRef);
-          if (checkinDoc.exists) {
-            const checkinData = checkinDoc.data();
-            if (analysis.suggestedTime >= checkinData.checkinTime) {
-              logger.warn(`Checkout time ${analysis.suggestedTime} conflicts with checkin time ${checkinData.checkinTime}`);
-              return {
-                success: false,
-                message: `Гість не може виїхати о ${analysis.suggestedTime}, бо в цей же день заїзд о ${checkinData.checkinTime}.`
-              };
-            }
-          }
-        }
-
         logger.info(`Updating checkout time for booking ${booking.id}`);
         transaction.update(bookingRef, {
           checkoutTime: analysis.suggestedTime,
@@ -422,22 +665,6 @@ async function updateCleaningTime(userId, analysis) {
         };
       }
       else if (analysis.changeType === 'cleaning' && booking.type === 'checkout') {
-        // Validate cleaning time
-        if (analysis.suggestedTime < booking.checkoutTime) {
-          logger.warn(`Invalid cleaning time ${analysis.suggestedTime} - before checkout time ${booking.checkoutTime}`);
-          return {
-            success: false,
-            message: `Неможливо встановити прибирання на ${analysis.suggestedTime}, гість виїжджає о ${booking.checkoutTime}.`
-          };
-        }
-        if (analysis.suggestedTime >= '14:00') {
-          logger.warn(`Invalid cleaning time ${analysis.suggestedTime} - must be before 14:00`);
-          return {
-            success: false,
-            message: `Прибирання має бути завершене до 14:00, ${analysis.suggestedTime} - запізно.`
-          };
-        }
-
         logger.info(`Updating cleaning time for booking ${booking.id}`);
         transaction.update(bookingRef, {
           cleaningTime: analysis.suggestedTime,
