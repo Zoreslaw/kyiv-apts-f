@@ -1,4 +1,8 @@
-// The Cloud Functions for Firebase SDK to create Cloud Functions and triggers.
+/**
+ * Firebase Cloud Functions for Telegram Bot
+ * Handles apartment cleaning task management and scheduling
+ */
+
 const { logger } = require("firebase-functions");
 const { onRequest } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
@@ -10,25 +14,26 @@ const { getFirestore } = require("firebase-admin/firestore");
 const axios = require("axios");
 const OpenAI = require("openai");
 
-// Initialize Firebase
+// Initialize Firebase Admin SDK
 initializeApp();
 const db = getFirestore();
 
 // Get environment variables (BEST PRACTICE: no fallback token here)
 const openaiApiKey = defineString('OPENAI_API_KEY').value();
 const botToken = defineString('TELEGRAM_BOT_TOKEN').value(); 
-// If you absolutely MUST keep a fallback, you could do: 
-// const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "YOUR_HARD_CODED_FALLBACK_TOKEN";
 
-// Initialize OpenAI
+// Initialize OpenAI client with API key
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || openaiApiKey
 });
 
-// Construct Telegram API URL
+// Construct Telegram API URL for bot interactions
 const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN || botToken}`;
 
-// Define keyboard markup for the menu
+/**
+ * Main menu keyboard layout for the Telegram bot
+ * Provides quick access to common commands and features
+ */
 const mainMenuKeyboard = {
   keyboard: [
     [
@@ -44,31 +49,35 @@ const mainMenuKeyboard = {
 };
 
 /** 
- * Utility to get "today" in Europe/Kiev, plus a day offset if needed. 
- * This ensures consistency with local business logic. 
+ * Get current date in Europe/Kiev timezone with optional offset
+ * @param {number} offsetDays - Number of days to offset from current date
+ * @returns {string} Date in YYYY-MM-DD format
  */
 function getKievDate(offsetDays = 0) {
-  const nowInKiev = new Date(
-    new Date().toLocaleString('en-US', { timeZone: 'Europe/Kiev' })
-  );
-  // Optional offset if you want future or past days
-  nowInKiev.setDate(nowInKiev.getDate() + offsetDays);
-  // Return a formatted string "YYYY-MM-DD"
-  const year = nowInKiev.getFullYear();
-  const month = String(nowInKiev.getMonth() + 1).padStart(2, '0');
-  const day = String(nowInKiev.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  try {
+    const nowInKiev = new Date(
+      new Date().toLocaleString('en-US', { timeZone: 'Europe/Kiev' })
+    );
+    nowInKiev.setDate(nowInKiev.getDate() + offsetDays);
+    const year = nowInKiev.getFullYear();
+    const month = String(nowInKiev.getMonth() + 1).padStart(2, '0');
+    const day = String(nowInKiev.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  } catch (error) {
+    logger.error('Error getting Kiev date:', error);
+    throw new Error('Failed to get Kiev date');
+  }
 }
 
 /**
- * Sync check-ins and check-outs with Firestore 'bookings' collection.
- * Called by scheduled function (below).
+ * Sync check-ins and check-outs with Firestore 'bookings' collection
+ * Fetches data from external API and updates local database
+ * @returns {Promise<boolean>} Success status of sync operation
  */
 async function syncBookingsWithDatabase() {
   try {
-    logger.log('Starting booking sync with database...');
+    logger.info('Starting booking sync with database...');
 
-    // Fetch current data from external API
     const [checkoutsResponse, checkinsResponse] = await Promise.all([
       axios.get("https://kievapts.com/api/1.1/json/checkouts"),
       axios.get("https://kievapts.com/api/1.1/json/checkins")
@@ -77,31 +86,27 @@ async function syncBookingsWithDatabase() {
     const checkoutsByDate = checkoutsResponse.data.response || {};
     const checkinsByDate = checkinsResponse.data.response || {};
 
-    // Collect all unique dates
     const allDates = [...new Set([
       ...Object.keys(checkoutsByDate),
       ...Object.keys(checkinsByDate)
     ])];
 
-    logger.log(`Found ${allDates.length} dates to process for sync.`);
+    logger.info(`Found ${allDates.length} dates to process for sync`);
 
-    // Process each date
     for (const date of allDates) {
       const checkouts = checkoutsByDate[date] || [];
       const checkins = checkinsByDate[date] || [];
 
-      // Process checkouts
       for (const checkout of checkouts) {
         const checkoutRef = db.collection('bookings').doc(`${date}_${checkout.apartment_id}_checkout`);
         const existingCheckout = await checkoutRef.get();
 
-        // Check if same-day checkin
         const hasSameDayCheckin = checkins.some(
           checkin => checkin.apartment_id === checkout.apartment_id
         );
 
         if (!existingCheckout.exists) {
-          logger.log(`Adding new checkout for apartment ${checkout.apartment_id} on ${date}`);
+          logger.info(`Adding new checkout for apartment ${checkout.apartment_id} on ${date}`);
           await checkoutRef.set({
             type: 'checkout',
             date,
@@ -109,14 +114,13 @@ async function syncBookingsWithDatabase() {
             address: checkout.apartment_address,
             guestName: checkout.guest_name,
             guestContact: checkout.guest_contact,
-            checkoutTime: '12:00', // default
+            checkoutTime: '12:00',
             hasSameDayCheckin,
             cleaningTime: null,
             createdAt: new Date(),
             updatedAt: new Date()
           });
         } else {
-          // Update minimal fields
           await checkoutRef.update({
             hasSameDayCheckin,
             updatedAt: new Date()
@@ -124,13 +128,12 @@ async function syncBookingsWithDatabase() {
         }
       }
 
-      // Process checkins
       for (const checkin of checkins) {
         const checkinRef = db.collection('bookings').doc(`${date}_${checkin.apartment_id}_checkin`);
         const existingCheckin = await checkinRef.get();
 
         if (!existingCheckin.exists) {
-          logger.log(`Adding new checkin for apartment ${checkin.apartment_id} on ${date}`);
+          logger.info(`Adding new checkin for apartment ${checkin.apartment_id} on ${date}`);
           await checkinRef.set({
             type: 'checkin',
             date,
@@ -138,12 +141,11 @@ async function syncBookingsWithDatabase() {
             address: checkin.apartment_address,
             guestName: checkin.guest_name,
             guestContact: checkin.guest_contact,
-            checkinTime: '14:00', // default
+            checkinTime: '14:00',
             createdAt: new Date(),
             updatedAt: new Date()
           });
         } else {
-          // Update minimal fields
           await checkinRef.update({
             updatedAt: new Date()
           });
@@ -151,248 +153,54 @@ async function syncBookingsWithDatabase() {
       }
     }
 
-    logger.log('Booking sync completed successfully');
+    logger.info('Booking sync completed successfully');
     return true;
-  } catch (err) {
+  } catch (err) { 
     logger.error('Error syncing bookings:', err);
     return false;
   }
 }
 
-/**
- * Scheduled function to sync every hour. 
- * You could adjust the CRON as needed, e.g. '0 * * * *' for every hour. 
- */
+// Schedule booking sync to run every hour
 exports.scheduledSyncBookings = onSchedule({ schedule: 'every 60 minutes' }, async () => {
   await syncBookingsWithDatabase();
 });
 
 /**
- * Minimal filter to see if user message should go to OpenAI or not.
- * Example: if text includes "please change time"
+ * Check if user message should be processed by OpenAI
+ * Looks for time-related keywords and patterns
+ * @param {string} text - User message to analyze
+ * @returns {boolean} Whether to use OpenAI processing
  */
 function shouldUseOpenAI(text) {
   if (!text) return false;
-  const lower = text.toLowerCase();
   
-  // Russian words to detect
-  const russianWords = [
-    'изменить', 'установить', 'поставить', 'назначить', 'отложить',
-    'время', 'выезд', 'заезд', 'уборка', 'гость', 'квартира',
-    'поменять', 'перенести', 'отменить', 'отменить', 'отложить',
-    'изменение', 'установка', 'назначение', 'отмена', 'отсрочка',
-    'временной', 'временные', 'временное', 'временная'
+  const timeChangePatterns = [
+    /змін/i, /постав/i, /встанов/i,
+    /\d{1,2}[:. ]\d{2}/,
+    /прибирання/i, /заїзд/i, /виїзд/i
   ];
 
-  // Check for Russian words first
-  for (const word of russianWords) {
-    if (lower.includes(word)) {
-      return {
-        isRussian: true,
-        message: "🇺🇦 Бот підтримує тільки українську мову. Будь ласка, напишіть ваше повідомлення українською."
-      };
-    }
-  }
-  
-  // Common time-related keywords (Ukrainian and English)
-  const timeKeywords = [
-    'change', 'update', 'set', 'make', 'put', 'schedule', 'arrange',
-    'змінити', 'встановити', 'поставити', 'призначити', 'відкласти',
-    'перенести', 'передвинути', 'відкласти', 'відмінити', 'скасувати',
-    'відтермінувати', 'відстрочити', 'відкласти', 'відкласти', 'відкласти',
-    'перенести', 'передвинути', 'відкласти', 'відмінити', 'скасувати',
-    'відтермінувати', 'відстрочити', 'відкласти', 'відкласти', 'відкласти',
-    'перенести', 'передвинути', 'відкласти', 'відмінити', 'скасувати',
-    'відтермінувати', 'відстрочити', 'відкласти', 'відкласти', 'відкласти'
-  ];
-  
-  // Time-related nouns
-  const timeNouns = [
-    'time', 'hour', 'checkout', 'check-in', 'checkin', 'cleaning',
-    'час', 'година', 'виїзд', 'заїзд', 'прибирання', 'від\'їзд',
-    'заїзд', 'прибирання', 'уборка', 'прибирання', 'прибирання',
-    'прибирання', 'прибирання', 'прибирання', 'прибирання',
-    'прибирання', 'прибирання', 'прибирання', 'прибирання',
-    'прибирання', 'прибирання', 'прибирання', 'прибирання',
-    'прибирання', 'прибирання', 'прибирання', 'прибирання'
-  ];
-
-  // Guest-related words
-  const guestWords = [
-    'guest', 'гость', 'гостя', 'гостю', 'гості', 'гостями',
-    'гостями', 'гостями', 'гостями', 'гостями', 'гостями',
-    'гостями', 'гостями', 'гостями', 'гостями', 'гостями',
-    'гостями', 'гостями', 'гостями', 'гостями', 'гостями'
-  ];
-
-  // Apartment-related words
-  const apartmentWords = [
-    'apartment', 'flat', 'квартира', 'квартири', 'квартиру',
-    'квартире', 'квартирой', 'квартирами', 'квартирах',
-    'апартаменты', 'апартамент', 'апартаментов', 'апартаментам',
-    'апартаментами', 'апартаментах'
-  ];
-
-  // Time-related adjectives
-  const timeAdjectives = [
-    'new', 'different', 'other', 'another', 'next', 'later',
-    'ранній', 'пізній', 'новий', 'інший', 'наступний',
-    'пізніше', 'раніше', 'раніше', 'раніше', 'раніше'
-  ];
-
-  // Check if text contains any combination of time keywords and nouns
-  for (const keyword of timeKeywords) {
-    for (const noun of timeNouns) {
-      if (lower.includes(`${keyword} ${noun}`) || lower.includes(`${noun} ${keyword}`)) {
-        return true;
-      }
-    }
-  }
-
-  // Check for specific time formats (e.g., "at 15:00", "to 16:00")
-  const timePatterns = [
-    /\b(?:at|to|by|until|till|до|на|о)\s+\d{1,2}:\d{2}\b/,
-    /\b\d{1,2}:\d{2}\b/,
-    /\b(?:am|pm)\b/,
-    /\b\d{1,2}\b/, // Just numbers like "15" or "12"
-    /\b(?:на|о|в)\s+\d{1,2}\b/, // Ukrainian time patterns
-    /\b(?:до|після|після|після)\s+\d{1,2}\b/,
-    /\b(?:до|після|після|після)\s+\d{1,2}:\d{2}\b/,
-    /\b(?:в|на|о)\s+(?:ранку|вечері|день|дні|днів)\b/,
-    /\b(?:в|на|о)\s+(?:ранку|вечері|день|дні|днів)\s+\d{1,2}\b/,
-    /\b(?:в|на|о)\s+(?:ранку|вечері|день|дні|днів)\s+\d{1,2}:\d{2}\b/,
-    /\b(?:в|на|о)\s+(?:ранку|вечері|день|дні|днів)\s+(?:до|після)\s+\d{1,2}\b/,
-    /\b(?:в|на|о)\s+(?:ранку|вечері|день|дні|днів)\s+(?:до|після)\s+\d{1,2}:\d{2}\b/
-  ];
-
-  for (const pattern of timePatterns) {
-    if (pattern.test(lower)) {
-      return true;
-    }
-  }
-
-  // Check for specific time-related phrases
-  const timePhrases = [
-    'change the time',
-    'update the time',
-    'set the time',
-    'new time',
-    'different time',
-    'змінити час',
-    'новий час',
-    'інший час',
-    'перенести',
-    'відкласти',
-    'передвинути',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти',
-    'відкласти'
-  ];
-
-  // Check for combinations with guest names
-  for (const keyword of timeKeywords) {
-    for (const guest of guestWords) {
-      if (lower.includes(`${keyword} ${guest}`) || lower.includes(`${guest} ${keyword}`)) {
-        return true;
-      }
-    }
-  }
-
-  // Check for combinations with apartment numbers
-  for (const keyword of timeKeywords) {
-    for (const apartment of apartmentWords) {
-      if (lower.includes(`${keyword} ${apartment}`) || lower.includes(`${apartment} ${keyword}`)) {
-        return true;
-      }
-    }
-  }
-
-  // Check for combinations with time adjectives
-  for (const keyword of timeKeywords) {
-    for (const adjective of timeAdjectives) {
-      if (lower.includes(`${keyword} ${adjective}`) || lower.includes(`${adjective} ${keyword}`)) {
-        return true;
-      }
-    }
-  }
-
-  // Check for specific time-related phrases
-  for (const phrase of timePhrases) {
-    if (lower.includes(phrase)) {
-      return true;
-    }
-  }
-
-  // Check for apartment-related patterns
-  const apartmentPatterns = [
-    /\b(?:квартир[аи]|апартамент[и]?)\s+\d+/,
-    /\b(?:квартир[аи]|апартамент[и]?)\s+на\s+\d+/,
-    /\b(?:квартир[аи]|апартамент[и]?)\s+в\s+\d+/,
-    /\b(?:квартир[аи]|апартамент[и]?)\s+на\s+(?:ранку|вечері|день|дні|днів)\b/,
-    /\b(?:квартир[аи]|апартамент[и]?)\s+в\s+(?:ранку|вечері|день|дні|днів)\b/,
-    /\b(?:квартир[аи]|апартамент[и]?)\s+на\s+(?:ранку|вечері|день|дні|днів)\s+\d{1,2}\b/,
-    /\b(?:квартир[аи]|апартамент[и]?)\s+в\s+(?:ранку|вечері|день|дні|днів)\s+\d{1,2}\b/,
-    /\b(?:квартир[аи]|апартамент[и]?)\s+на\s+(?:ранку|вечері|день|дні|днів)\s+\d{1,2}:\d{2}\b/,
-    /\b(?:квартир[аи]|апартамент[и]?)\s+в\s+(?:ранку|вечері|день|дні|днів)\s+\d{1,2}:\d{2}\b/
-  ];
-
-  for (const pattern of apartmentPatterns) {
-    if (pattern.test(lower)) {
-      return true;
-    }
-  }
-
-  // Check for relative time expressions
-  const relativeTimePatterns = [
-    /\b(?:раніше|пізніше|раніше|пізніше)\b/,
-    /\b(?:раніше|пізніше|раніше|пізніше)\s+\d{1,2}\b/,
-    /\b(?:раніше|пізніше|раніше|пізніше)\s+\d{1,2}:\d{2}\b/,
-    /\b(?:раніше|пізніше|раніше|пізніше)\s+(?:ранку|вечері|день|дні|днів)\b/,
-    /\b(?:раніше|пізніше|раніше|пізніше)\s+(?:ранку|вечері|день|дні|днів)\s+\d{1,2}\b/,
-    /\b(?:раніше|пізніше|раніше|пізніше)\s+(?:ранку|вечері|день|дні|днів)\s+\d{1,2}:\d{2}\b/
-  ];
-
-  for (const pattern of relativeTimePatterns) {
-    if (pattern.test(lower)) {
-      return true;
-    }
-  }
-
-  return false;
+  return timeChangePatterns.some(pattern => pattern.test(text));
 }
 
 /**
- * Process user text with OpenAI, returning structured analysis or null.
+ * Process user text with OpenAI and return structured analysis
+ * @param {string} text - User message to process
+ * @param {string} userId - Telegram user ID
+ * @returns {Promise<Object|null>} Structured analysis of the message
  */
 async function processTextMessage(text, userId) {
   try {
-    logger.log(`processTextMessage -> user ${userId}, text: "${text}"`);
+    logger.info(`Processing message from user ${userId}: "${text}"`);
 
-    // If the text does NOT match your filter, just skip
     if (!shouldUseOpenAI(text)) {
+      logger.debug('Message does not require OpenAI processing');
       return null;
     }
 
-    // Fetch up to the next 10 days of bookings from Firestore
-    // to avoid retrieving an enormous collection.
     const today = getKievDate(0);
-    const maxDate = getKievDate(10); // next 10 days
+    const maxDate = getKievDate(10);
 
     const bookingsSnapshot = await db.collection('bookings')
       .where('date', '>=', today)
@@ -412,9 +220,8 @@ async function processTextMessage(text, userId) {
       });
     });
 
-    logger.log(`Found ${currentTasks.length} upcoming tasks for OpenAI analysis.`);
+    logger.info(`Found ${currentTasks.length} upcoming tasks for analysis`);
 
-    // Build conversation
     const systemMsg = `You are a booking schedule assistant for an apartment rental service.
 You need to analyze the user's message and the current tasks to determine what changes are requested.
 
@@ -459,7 +266,6 @@ Example user messages and how to handle them:
 3. "зміни заїзд baseina на 15" -> Match by address "Baseina"
 4. "встанови виїзд 598 на 11" -> Match by ID "598"`;
 
-    // Chat Completions (GPT-3.5-turbo)
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -471,12 +277,11 @@ Example user messages and how to handle them:
     });
 
     const content = completion.choices[0].message.content;
-    logger.log('OpenAI raw response:', content);
+    logger.debug('OpenAI response:', content);
 
-    // Validate JSON
     try {
       const parsed = JSON.parse(content);
-      return parsed; // ideally check for required fields
+      return parsed;
     } catch (err) {
       logger.warn('OpenAI returned invalid JSON:', err);
       return null;
@@ -489,18 +294,22 @@ Example user messages and how to handle them:
 }
 
 /**
- * Update time in Firestore with a transaction to avoid race conditions. 
+ * Update time in Firestore with a transaction to avoid race conditions
+ * @param {string} userId - Telegram user ID
+ * @param {Object} analysis - OpenAI analysis of the user's request
+ * @returns {Promise<Object>} Result of the update operation
  */
 async function updateCleaningTime(userId, analysis) {
   try {
     if (!analysis?.targetBooking?.id) {
+      logger.warn('Invalid analysis object or missing booking ID');
       return { 
         success: false,
         message: "Не вдалося визначити завдання. Будь ласка, уточни більше деталей."
       };
     }
 
-    logger.log(`Attempting to update booking ${analysis.targetBooking.id} for user ${userId}`);
+    logger.info(`Attempting to update booking ${analysis.targetBooking.id} for user ${userId}`);
 
     const bookingRef = db.collection('bookings').doc(analysis.targetBooking.id);
 
@@ -517,16 +326,16 @@ async function updateCleaningTime(userId, analysis) {
       }
       const booking = bookingDoc.data();
 
-      // Possibly handle each change type:
+      // Handle each change type with appropriate validation
       if (analysis.changeType === 'checkin' && booking.type === 'checkin') {
-        // Just update the checkinTime
+        logger.info(`Updating checkin time for booking ${booking.id}`);
         transaction.update(bookingRef, {
           checkinTime: analysis.suggestedTime,
           updatedAt: new Date(),
           lastUpdatedBy: userId
         });
 
-        // Save time change record
+        // Save time change record for audit
         await db.collection('timeChanges').add({
           bookingId: analysis.targetBooking.id,
           apartmentId: booking.apartmentId,
@@ -542,7 +351,6 @@ async function updateCleaningTime(userId, analysis) {
           updatedBy: userId
         });
 
-        // Return message from transaction
         const [yyyy, mm, dd] = booking.date.split('-');
         const displayDate = `${dd}.${mm}.${yyyy}`;
         return {
@@ -553,24 +361,28 @@ async function updateCleaningTime(userId, analysis) {
       else if (analysis.changeType === 'checkout' && booking.type === 'checkout') {
         // Validate new checkout time
         if (analysis.suggestedTime >= '14:00') {
+          logger.warn(`Invalid checkout time ${analysis.suggestedTime} - must be before 14:00`);
           return {
             success: false,
             message: `Неможливо встановити виїзд о ${analysis.suggestedTime}, оскільки гість має виїхати до 14:00.`
           };
         }
         if (booking.cleaningTime && analysis.suggestedTime > booking.cleaningTime) {
+          logger.warn(`Invalid checkout time ${analysis.suggestedTime} - after cleaning time ${booking.cleaningTime}`);
           return {
             success: false,
             message: `Новий час виїзду ${analysis.suggestedTime} пізніше часу прибирання ${booking.cleaningTime}. Спочатку змініть час прибирання.`
           };
         }
-        // If hasSameDayCheckin, check if it conflicts
+
+        // Check for same-day checkin conflicts
         if (booking.hasSameDayCheckin) {
           const checkinRef = db.collection('bookings').doc(`${booking.date}_${booking.apartmentId}_checkin`);
           const checkinDoc = await transaction.get(checkinRef);
           if (checkinDoc.exists) {
             const checkinData = checkinDoc.data();
             if (analysis.suggestedTime >= checkinData.checkinTime) {
+              logger.warn(`Checkout time ${analysis.suggestedTime} conflicts with checkin time ${checkinData.checkinTime}`);
               return {
                 success: false,
                 message: `Гість не може виїхати о ${analysis.suggestedTime}, бо в цей же день заїзд о ${checkinData.checkinTime}.`
@@ -579,7 +391,7 @@ async function updateCleaningTime(userId, analysis) {
           }
         }
 
-        // Update checkoutTime
+        logger.info(`Updating checkout time for booking ${booking.id}`);
         transaction.update(bookingRef, {
           checkoutTime: analysis.suggestedTime,
           updatedAt: new Date(),
@@ -610,21 +422,23 @@ async function updateCleaningTime(userId, analysis) {
         };
       }
       else if (analysis.changeType === 'cleaning' && booking.type === 'checkout') {
-        // Validate cleaning
+        // Validate cleaning time
         if (analysis.suggestedTime < booking.checkoutTime) {
+          logger.warn(`Invalid cleaning time ${analysis.suggestedTime} - before checkout time ${booking.checkoutTime}`);
           return {
             success: false,
             message: `Неможливо встановити прибирання на ${analysis.suggestedTime}, гість виїжджає о ${booking.checkoutTime}.`
           };
         }
         if (analysis.suggestedTime >= '14:00') {
+          logger.warn(`Invalid cleaning time ${analysis.suggestedTime} - must be before 14:00`);
           return {
             success: false,
             message: `Прибирання має бути завершене до 14:00, ${analysis.suggestedTime} - запізно.`
           };
         }
 
-        // Update cleaningTime
+        logger.info(`Updating cleaning time for booking ${booking.id}`);
         transaction.update(bookingRef, {
           cleaningTime: analysis.suggestedTime,
           updatedAt: new Date(),
@@ -656,7 +470,7 @@ async function updateCleaningTime(userId, analysis) {
         };
       }
       else {
-        // If it's not recognized or mismatched type
+        logger.warn(`Invalid change type ${analysis.changeType} for booking type ${booking.type}`);
         return {
           success: false,
           message: "Неможливо змінити час для цього типу завдання."
@@ -678,8 +492,12 @@ async function updateCleaningTime(userId, analysis) {
   }
 }
 
-// Add this function to handle menu commands
+/**
+ * Handle menu command - show main menu to user
+ * @param {string} chatId - Telegram chat ID
+ */
 async function handleMenuCommand(chatId) {
+  logger.info(`Showing menu to user ${chatId}`);
   await axios.post(`${TELEGRAM_API}/sendMessage`, {
     chat_id: chatId,
     text: "Оберіть опцію з меню:",
@@ -687,8 +505,12 @@ async function handleMenuCommand(chatId) {
   });
 }
 
-// Add this function to handle help command
+/**
+ * Handle help command - show help message to user
+ * @param {string} chatId - Telegram chat ID
+ */
 async function handleHelpCommand(chatId) {
+  logger.info(`Showing help to user ${chatId}`);
   const helpText = `🤖 *Доступні команди:*
 
 📋 *Мої завдання* - переглянути список завдань
@@ -713,8 +535,12 @@ async function handleHelpCommand(chatId) {
   });
 }
 
-// Add this function to handle about command
+/**
+ * Handle about command - show bot information
+ * @param {string} chatId - Telegram chat ID
+ */
 async function handleAboutCommand(chatId) {
+  logger.info(`Showing about info to user ${chatId}`);
   const aboutText = `🤖 *Бот для управління завданнями*
 
 Цей бот допомагає управляти завданнями з прибирання квартир:
@@ -732,9 +558,14 @@ async function handleAboutCommand(chatId) {
   });
 }
 
-// Add this function before the webhook handler
+/**
+ * Handle get tasks command - show user's assigned tasks
+ * @param {string} chatId - Telegram chat ID
+ */
 async function handleGetMyTasks(chatId) {
   try {
+    logger.info(`Fetching tasks for user ${chatId}`);
+    
     // Get user ID from chat ID
     const userDoc = await db.collection('users')
       .where('chatId', '==', chatId)
@@ -742,6 +573,7 @@ async function handleGetMyTasks(chatId) {
       .get();
 
     if (userDoc.empty) {
+      logger.warn(`User not found for chat ID ${chatId}`);
       await axios.post(`${TELEGRAM_API}/sendMessage`, {
         chat_id: chatId,
         text: "Ти не зареєстрований у системі. Будь ласка, скористайся командою /start."
@@ -752,7 +584,7 @@ async function handleGetMyTasks(chatId) {
     const userData = userDoc.docs[0].data();
     const userId = userData.userId;
     const isAdmin = userData.type === 'admin';
-    logger.log(`User ${userId} is ${isAdmin ? 'admin' : 'cleaner'}`);
+    logger.info(`User ${userId} is ${isAdmin ? 'admin' : 'cleaner'}`);
 
     let assignedApartments = [];
     if (!isAdmin) {
@@ -764,6 +596,7 @@ async function handleGetMyTasks(chatId) {
         assignedApartments = assignmentDocs.docs[0].data().apartmentId || [];
       }
       if (assignedApartments.length === 0) {
+        logger.warn(`No apartments assigned to user ${userId}`);
         await axios.post(`${TELEGRAM_API}/sendMessage`, {
           chat_id: chatId,
           text: "На тебе не додано жодних квартир. :("
@@ -800,6 +633,7 @@ async function handleGetMyTasks(chatId) {
 
     const allDates = Object.keys(grouped).sort();
     if (allDates.length === 0) {
+      logger.info(`No tasks found for user ${userId}`);
       await axios.post(`${TELEGRAM_API}/sendMessage`, {
         chat_id: chatId,
         text: "Немає даних про заїзди або виїзди на найближчі дні."
@@ -872,7 +706,7 @@ async function handleGetMyTasks(chatId) {
       });
     }
 
-    logger.log(`Task request completed for user ${userId}`);
+    logger.info(`Task request completed for user ${userId}`);
   } catch (error) {
     logger.error('Error in handleGetMyTasks:', error);
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
@@ -882,11 +716,14 @@ async function handleGetMyTasks(chatId) {
   }
 }
 
-// Update the webhook handler to include new commands
+/**
+ * Telegram webhook handler
+ * Processes incoming messages and commands
+ */
 exports.telegramWebhook = onRequest(async (req, res) => {
   try {
     const update = req.body;
-    logger.log("Telegram Update received:", update);
+    logger.info("Received Telegram update:", update);
 
     if (update.message?.text) {
       const chatId = update.message.chat.id;
@@ -898,6 +735,8 @@ exports.telegramWebhook = onRequest(async (req, res) => {
         const firstName = update.message.from.first_name;
         const lastName = update.message.from.last_name || '';
         const username = update.message.from.username || '';
+        
+        logger.info(`New user registration: ${firstName} (${userId})`);
         
         // Store or update user
         await db.collection('users').doc(userId.toString()).set({
@@ -919,7 +758,6 @@ exports.telegramWebhook = onRequest(async (req, res) => {
           text: `Вітаю, ${firstName}! Я бот для управління завданнями.`,
           reply_markup: mainMenuKeyboard
         });
-        logger.log(`User ${firstName} (${userId}) registered`);
         return res.status(200).send({ success: true });
       }
 
@@ -943,11 +781,12 @@ exports.telegramWebhook = onRequest(async (req, res) => {
           break;
         default:
           // Handle normal text messages (time changes etc)
-          logger.log(`Processing text from user ${userId}: "${text}"`);
+          logger.info(`Processing text from user ${userId}: "${text}"`);
 
           // Check for Russian language first
           const openAICheck = shouldUseOpenAI(text);
           if (openAICheck && openAICheck.isRussian) {
+            logger.warn(`Russian language detected in message from user ${userId}`);
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
               chat_id: chatId,
               text: openAICheck.message
@@ -960,7 +799,7 @@ exports.telegramWebhook = onRequest(async (req, res) => {
 
           // If analysis is null, do nothing or respond politely
           if (!analysis) {
-            logger.log('No AI analysis or unrecognized request');
+            logger.debug('No AI analysis or unrecognized request');
             break;
           }
 
@@ -970,6 +809,7 @@ exports.telegramWebhook = onRequest(async (req, res) => {
             const userDoc = await userDocRef.get();
             
             if (!userDoc.exists) {
+              logger.warn(`User ${userId} not found in database`);
               await axios.post(`${TELEGRAM_API}/sendMessage`, {
                 chat_id: chatId,
                 text: "Ти не зареєстрований у системі. Будь ласка, скористайся командою /start."
@@ -986,6 +826,7 @@ exports.telegramWebhook = onRequest(async (req, res) => {
                 .get();
 
               if (assignmentDocs.empty || !assignmentDocs.docs[0].data().apartmentId?.includes(analysis.targetBooking.apartmentId)) {
+                logger.warn(`User ${userId} attempted to access unauthorized apartment ${analysis.targetBooking.apartmentId}`);
                 await axios.post(`${TELEGRAM_API}/sendMessage`, {
                   chat_id: chatId,
                   text: "У вас немає доступу до цієї квартири."
@@ -999,6 +840,7 @@ exports.telegramWebhook = onRequest(async (req, res) => {
               // Validate time format
               const timeRegex = /^([0-1]?\d|2[0-3]):00$/;
               if (!timeRegex.test(analysis.suggestedTime)) {
+                logger.warn(`Invalid time format from user ${userId}: ${analysis.suggestedTime}`);
                 await axios.post(`${TELEGRAM_API}/sendMessage`, {
                   chat_id: chatId,
                   text: "Будь ласка, вкажіть час у форматі ГГ:00 (наприклад, 15:00)."
@@ -1006,10 +848,10 @@ exports.telegramWebhook = onRequest(async (req, res) => {
                 break;
               }
 
-              logger.log(`Time format validated: ${analysis.suggestedTime}`);
+              logger.info(`Time format validated: ${analysis.suggestedTime}`);
               const result = await updateCleaningTime(userId, analysis);
 
-              logger.log('Time change result:', result);
+              logger.info('Time change result:', result);
               await axios.post(`${TELEGRAM_API}/sendMessage`, {
                 chat_id: chatId,
                 text: result.message
