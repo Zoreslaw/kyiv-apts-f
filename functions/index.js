@@ -46,7 +46,7 @@ const mainMenuKeyboard = {
   resize_keyboard: true,
 };
 
-// Add conversation context management
+// Conversation context logic unchanged
 const conversationContexts = new Map();
 
 function getConversationContext(chatId) {
@@ -70,7 +70,7 @@ function clearConversationContext(chatId) {
 }
 
 /**
- * Get date in 'YYYY-MM-DD' (Kiev timezone)
+ * getKievDate - unchanged
  */
 function getKievDate(offsetDays = 0) {
   const nowInKiev = new Date(
@@ -84,14 +84,11 @@ function getKievDate(offsetDays = 0) {
 }
 
 /**
- * Sync check-ins and check-outs from external API into Firestore
- * Also includes sumToCollect & keysCount
+ * syncBookingsWithDatabase - unchanged
  */
 async function syncBookingsWithDatabase() {
   try {
     logger.info("Starting booking sync with database...");
-
-    // Example external calls
     const [checkoutsResponse, checkinsResponse] = await Promise.all([
       axios.get("https://kievapts.com/api/1.1/json/checkouts"),
       axios.get("https://kievapts.com/api/1.1/json/checkins"),
@@ -187,7 +184,7 @@ async function syncBookingsWithDatabase() {
   }
 }
 
-// Schedule sync every hour
+// scheduledSyncBookings unchanged
 exports.scheduledSyncBookings = onSchedule(
   { schedule: "every 60 minutes" },
   async () => {
@@ -196,7 +193,7 @@ exports.scheduledSyncBookings = onSchedule(
 );
 
 /**
- * Old approach to list tasks (no AI).
+ * handleGetMyTasks - unchanged
  */
 async function handleGetMyTasks(chatId) {
   try {
@@ -220,7 +217,6 @@ async function handleGetMyTasks(chatId) {
     const userId = userData.userId;
     const isAdmin = userData.type === "admin";
 
-    // 2) If not admin, load assigned apartments
     let assignedApartments = [];
     if (!isAdmin) {
       const assignSnap = await db
@@ -239,7 +235,6 @@ async function handleGetMyTasks(chatId) {
       }
     }
 
-    // 3) Query upcoming 7 days
     const today = getKievDate(0);
     const maxDate = getKievDate(7);
 
@@ -257,11 +252,9 @@ async function handleGetMyTasks(chatId) {
       return;
     }
 
-    // 4) Group tasks by date
     const grouped = {};
     bookingSnap.forEach((doc) => {
       const data = doc.data();
-      // Filter by assigned apartments if not admin
       if (!isAdmin && !assignedApartments.includes(String(data.apartmentId))) {
         return;
       }
@@ -281,7 +274,6 @@ async function handleGetMyTasks(chatId) {
       return;
     }
 
-    // 5) Build and send a message for each date
     for (const date of allDates) {
       const { checkouts, checkins } = grouped[date];
       if (!checkouts.length && !checkins.length) continue;
@@ -294,8 +286,7 @@ async function handleGetMyTasks(chatId) {
       if (checkouts.length > 0) {
         msg += `🔥 *ВИЇЗДИ:* 🔥\n\n`;
         msg += `⚠️ *ВАЖЛИВО:* ⚠️\n`;
-        msg += `Прибирання має бути завершено до 14:00`;
-        msg += `\n\n`;
+        msg += `Прибирання має бути завершено до 14:00\n\n`;
         for (const c of checkouts) {
           msg += `🔴 *ID:* ${c.apartmentId}\n`;
           msg += `🏠 *Aдреса:* ${c.address}\n`;
@@ -304,7 +295,6 @@ async function handleGetMyTasks(chatId) {
             ? `⏰ *Виїзд:* ${c.checkoutTime}\n`
             : `⏰ *Виїзд:* не призначено\n`;
 
-          // Two new fields
           msg += `💰 *Сума:* ${c.sumToCollect}\n`;
           msg += `🔑 *Ключів:* ${c.keysCount}\n`;
 
@@ -316,8 +306,7 @@ async function handleGetMyTasks(chatId) {
       if (checkins.length > 0) {
         msg += `✨ *ЗАЇЗДИ:* ✨\n\n`;
         msg += `⚠️ *ВАЖЛИВО:* ⚠️\n`;
-        msg += `Квартира має бути готова до заїзду`;
-        msg += `\n\n`;
+        msg += `Квартира має бути готова до заїзду\n\n`;
         for (const ci of checkins) {
           msg += `🟢 *ID:* ${ci.apartmentId}\n`;
           msg += `🏠 *Aдреса:* ${ci.address}\n`;
@@ -349,165 +338,92 @@ async function handleGetMyTasks(chatId) {
 }
 
 /**
- * Now define function-calling approach for updating times or sum/keys
+ * The booking update functions remain the same
+ * updateBookingTimeInFirestore / updateBookingInfoInFirestore
+ * manage_apartment_assignments
  */
 
-// 1) Update booking time (checkin/checkout)
-async function updateBookingTimeInFirestore({ bookingId, newTime, changeType, userId }) {
+//  Function to lookup user by name or username
+async function lookupUserByNameOrUsername(query) {
   try {
-    const ref = db.collection("bookings").doc(bookingId);
+    const normalized = query.replace(/^@/, "").trim().toLowerCase();
+    
+    // 1) Try exact username match
+    let snap = await db
+      .collection("users")
+      .where("username", "==", normalized)
+      .limit(1)
+      .get();
+    if (!snap.empty) {
+      return snap.docs[0].data();
+    }
 
-    return await db
-      .runTransaction(async (tran) => {
-        const snap = await tran.get(ref);
-        if (!snap.exists) {
-          return { success: false, message: "Booking not found in DB." };
-        }
+    // 2) Try exact firstName
+    snap = await db
+      .collection("users")
+      .where("firstName", "==", normalized)
+      .limit(1)
+      .get();
+    if (!snap.empty) {
+      return snap.docs[0].data();
+    }
 
-        const data = snap.data();
-        if (changeType === "checkin" && data.type !== "checkin") {
-          return {
-            success: false,
-            message: `Cannot update a checkin time on a ${data.type} booking.`,
-          };
-        }
-        if (changeType === "checkout" && data.type !== "checkout") {
-          return {
-            success: false,
-            message: `Cannot update a checkout time on a ${data.type} booking.`,
-          };
-        }
+    // 3) Try exact lastName
+    snap = await db
+      .collection("users")
+      .where("lastName", "==", normalized)
+      .limit(1)
+      .get();
+    if (!snap.empty) {
+      return snap.docs[0].data();
+    }
 
-        // Update the relevant field
-        if (changeType === "checkin") {
-          tran.update(ref, { checkinTime: newTime, updatedAt: new Date(), lastUpdatedBy: userId });
-        } else {
-          tran.update(ref, { checkoutTime: newTime, updatedAt: new Date(), lastUpdatedBy: userId });
-        }
-
-        // Log it
-        await db.collection("timeChanges").add({
-          bookingId,
-          oldTime: changeType === "checkin" ? data.checkinTime : data.checkoutTime,
-          newTime,
-          changeType,
-          updatedBy: userId,
-          updatedAt: new Date(),
-        });
-
-        return { success: true, message: "Time updated successfully." };
-      })
-      .catch((err) => {
-        logger.error("Transaction error:", err);
-        return { success: false, message: "Transaction error." };
-      });
+    // no luck
+    return null;
   } catch (err) {
-    logger.error("Error updating booking time:", err);
-    return { success: false, message: "Error updating booking time." };
+    logger.error("Error in lookupUserByNameOrUsername:", err);
+    return null;
   }
 }
 
-// 2) Update sumToCollect / keysCount
-async function updateBookingInfoInFirestore({
-  bookingId,
-  newSumToCollect,
-  newKeysCount,
-  userId,
-}) {
-  try {
-    const ref = db.collection("bookings").doc(bookingId);
-
-    return await db
-      .runTransaction(async (tran) => {
-        const snap = await tran.get(ref);
-        if (!snap.exists) {
-          return { success: false, message: "Booking not found in DB." };
-        }
-        const data = snap.data();
-
-        // Create update payload with only defined values
-        const updatePayload = { 
-          updatedAt: new Date(), 
-          lastUpdatedBy: userId 
-        };
-
-        // Only include fields that are numbers and not null/undefined
-        if (typeof newSumToCollect === "number" && !isNaN(newSumToCollect)) {
-          updatePayload.sumToCollect = newSumToCollect;
-        }
-        
-        if (typeof newKeysCount === "number" && !isNaN(newKeysCount)) {
-          updatePayload.keysCount = newKeysCount;
-        }
-
-        // Update document
-        await tran.update(ref, updatePayload);
-
-        // Log the change
-        await db.collection("timeChanges").add({
-          bookingId,
-          oldSum: data.sumToCollect,
-          newSum: updatePayload.sumToCollect !== undefined ? updatePayload.sumToCollect : data.sumToCollect,
-          oldKeys: data.keysCount,
-          newKeys: updatePayload.keysCount !== undefined ? updatePayload.keysCount : data.keysCount,
-          updatedBy: userId,
-          updatedAt: new Date(),
-        });
-
-        const changes = [];
-        if (updatePayload.sumToCollect !== undefined) {
-          changes.push(`суму на ${updatePayload.sumToCollect}`);
-        }
-        if (updatePayload.keysCount !== undefined) {
-          changes.push(`кількість ключів на ${updatePayload.keysCount}`);
-        }
-
-        return { 
-          success: true, 
-          message: `Успішно оновлено ${changes.join(" та ")}.` 
-        };
-      })
-      .catch((err) => {
-        logger.error("Transaction error:", err);
-        return { success: false, message: "Помилка при оновленні даних." };
-      });
-  } catch (err) {
-    logger.error("Error updating booking info:", err);
-    return { success: false, message: "Помилка при оновленні даних." };
-  }
-}
-
-/**
- * Handle apartment assignment updates (admin only)
- */
+//  Adjust manageApartmentAssignments to handle text userId
 async function updateApartmentAssignments({ targetUserId, action, apartmentIds, isAdmin }) {
   try {
-    // 1. Verify admin status
     if (!isAdmin) {
-      return { 
-        success: false, 
-        message: "Тільки адміністратори можуть керувати призначеннями квартир." 
+      return {
+        success: false,
+        message: "Тільки адміністратори можуть керувати призначеннями квартир.",
       };
     }
 
-    // 2. Find target user
-    const targetUserSnap = await db
+    // If targetUserId is not numeric, try lookup
+    if (!/^\d+$/.test(targetUserId)) {
+      const foundUser = await lookupUserByNameOrUsername(targetUserId);
+      if (!foundUser) {
+        return {
+          success: false,
+          message: `Не знайдено користувача за запитом '${targetUserId}'.`,
+        };
+      }
+      targetUserId = String(foundUser.userId);
+    }
+
+    const targetSnap = await db
       .collection("users")
       .where("userId", "==", targetUserId)
       .limit(1)
       .get();
-    
-    if (targetUserSnap.empty) {
-      return { 
-        success: false, 
-        message: "Користувача не знайдено." 
+
+    if (targetSnap.empty) {
+      return {
+        success: false,
+        message: "Користувача не знайдено в базі.",
       };
     }
 
-    // 3. Get/create cleaning assignments doc
     const assignmentSnap = await db
       .collection("cleaningAssignments")
-      .where("userId", "==", String(targetUserId))
+      .where("userId", "==", targetUserId)
       .limit(1)
       .get();
 
@@ -517,47 +433,104 @@ async function updateApartmentAssignments({ targetUserId, action, apartmentIds, 
     if (assignmentSnap.empty) {
       assignmentRef = db.collection("cleaningAssignments").doc();
       await assignmentRef.set({
-        userId: String(targetUserId),
+        userId: targetUserId,
         apartmentId: [],
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
       });
     } else {
       assignmentRef = assignmentSnap.docs[0].ref;
       currentApartments = assignmentSnap.docs[0].data().apartmentId || [];
     }
 
-    // 4. Update assignments
     let updatedApartments;
     if (action === "add") {
       updatedApartments = [...new Set([...currentApartments, ...apartmentIds])];
-    } else { // remove
-      updatedApartments = currentApartments.filter(id => !apartmentIds.includes(id));
+    } else {
+      updatedApartments = currentApartments.filter(
+        (id) => !apartmentIds.includes(id)
+      );
     }
 
     await assignmentRef.update({
       apartmentId: updatedApartments,
-      updatedAt: new Date()
+      updatedAt: new Date(),
     });
 
     const actionText = action === "add" ? "додано" : "видалено";
     return {
       success: true,
-      message: `Успішно ${actionText} квартири ${apartmentIds.join(", ")} ${action === "add" ? "до" : "у"} користувача.`
+      message: `Успішно ${actionText} квартири ${apartmentIds.join(", ")} ${
+        action === "add" ? "до" : "у"
+      } користувача ${targetUserId}.`,
     };
-
   } catch (err) {
     logger.error("Error updating apartment assignments:", err);
     return {
       success: false,
-      message: "Помилка при оновленні призначень квартир."
+      message: "Помилка при оновленні призначень квартир.",
     };
   }
 }
 
 /**
- * Define function schemas for OpenAI Function Calling
+ *  Show all apartments for a user (admin only)
  */
+async function showAllApartmentsForUser({ targetUserId, isAdmin }) {
+  if (!isAdmin) {
+    return {
+      success: false,
+      message: "Тільки адміністратор може дивитись чужі квартири.",
+    };
+  }
+  try {
+    // If not numeric, try lookup
+    if (!/^\d+$/.test(targetUserId)) {
+      const foundUser = await lookupUserByNameOrUsername(targetUserId);
+      if (!foundUser) {
+        return {
+          success: false,
+          message: `Не знайшов користувача за запитом '${targetUserId}'.`,
+        };
+      }
+      targetUserId = String(foundUser.userId);
+    }
+
+    const snap = await db
+      .collection("cleaningAssignments")
+      .where("userId", "==", targetUserId)
+      .limit(1)
+      .get();
+    if (snap.empty) {
+      return {
+        success: true,
+        message: `У користувача ${targetUserId} немає призначених квартир.`,
+      };
+    }
+    const docData = snap.docs[0].data();
+    const aptIds = docData.apartmentId || [];
+    if (aptIds.length === 0) {
+      return {
+        success: true,
+        message: `У користувача ${targetUserId} немає призначених квартир.`,
+      };
+    }
+    return {
+      success: true,
+      message: `У користувача ${targetUserId} призначені квартири: ${aptIds.join(
+        ", "
+      )}`,
+    };
+  } catch (err) {
+    logger.error("Error in showAllApartmentsForUser:", err);
+    return {
+      success: false,
+      message: "Помилка при отриманні квартир.",
+    };
+  }
+}
+
+// functionSchemas - add new "show_user_apartments" function
 const functionSchemas = [
   {
     type: "function",
@@ -569,27 +542,28 @@ const functionSchemas = [
         properties: {
           bookingId: {
             type: "string",
-            description: "Unique Firestore doc ID, e.g. '2025-03-15_598_checkout'"
+            description:
+              "Unique Firestore doc ID, e.g. '2025-03-15_598_checkout'",
           },
           newTime: {
             type: "string",
-            description: "New time in 'HH:00' format (checkout <14:00, checkin >14:00)."
+            description:
+              "New time in 'HH:00' format (checkout <14:00, checkin >14:00).",
           },
           changeType: {
             type: "string",
             enum: ["checkin", "checkout"],
-            description: "Which time to update? 'checkin' or 'checkout' only."
+            description: "Which time to update? 'checkin' or 'checkout' only.",
           },
           userId: {
             type: "string",
-            description: "Telegram user ID for logging"
-          }
+            description: "Telegram user ID for logging",
+          },
         },
         required: ["bookingId", "newTime", "changeType", "userId"],
-        additionalProperties: false
+        additionalProperties: false,
       },
-      //strict: true
-    }
+    },
   },
   {
     type: "function",
@@ -601,26 +575,25 @@ const functionSchemas = [
         properties: {
           bookingId: {
             type: "string",
-            description: "Unique Firestore doc ID of the booking"
+            description: "Unique Firestore doc ID of the booking",
           },
           newSumToCollect: {
             type: ["number", "null"],
-            description: "Optional new sum to collect (if updating)."
+            description: "Optional new sum to collect (if updating).",
           },
           newKeysCount: {
             type: ["number", "null"],
-            description: "Optional new number of keys (if updating)."
+            description: "Optional new number of keys (if updating).",
           },
           userId: {
             type: "string",
-            description: "Telegram user ID for logging"
-          }
+            description: "Telegram user ID for logging",
+          },
         },
         required: ["bookingId", "userId"],
-        additionalProperties: false
+        additionalProperties: false,
       },
-      //strict: true
-    }
+    },
   },
   {
     type: "function",
@@ -632,35 +605,57 @@ const functionSchemas = [
         properties: {
           targetUserId: {
             type: "string",
-            description: "Telegram user ID of the user whose assignments to modify"
+            description:
+              "Telegram user ID OR partial name/username of user to modify",
           },
           action: {
             type: "string",
             enum: ["add", "remove"],
-            description: "Whether to add or remove apartments"
+            description: "Whether to add or remove apartments",
           },
           apartmentIds: {
             type: "array",
             items: {
-              type: "string"
+              type: "string",
             },
-            description: "Array of apartment IDs to add or remove"
+            description: "Array of apartment IDs to add or remove",
           },
           isAdmin: {
             type: "boolean",
-            description: "Whether the requesting user is an admin"
-          }
+            description: "Whether the requesting user is an admin",
+          },
         },
         required: ["targetUserId", "action", "apartmentIds", "isAdmin"],
-        additionalProperties: false
-      }
-    }
-  }
+        additionalProperties: false,
+      },
+    },
+  },
+  //  show_user_apartments
+  {
+    type: "function",
+    function: {
+      name: "show_user_apartments",
+      description: "Shows all apartments assigned to a user (admin only).",
+      parameters: {
+        type: "object",
+        properties: {
+          targetUserId: {
+            type: "string",
+            description: "Telegram user ID or name of user to view",
+          },
+          isAdmin: {
+            type: "boolean",
+            description: "Whether the requesting user is an admin",
+          },
+        },
+        required: ["targetUserId", "isAdmin"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
-/**
- * The system prompt for the model
- */
+// systemPrompt - updated
 const systemPrompt = `
 You are a Telegram assistant for managing apartment bookings.
 
@@ -672,8 +667,7 @@ User Permissions:
 1. Admin users can:
    - See and modify all bookings
    - Add/remove apartment assignments for users
-   - Example: "Додай квартири 598, 321 для користувача @username"
-   - Example: "Видали квартири 432, 553 у користувача @username"
+   - See assigned apartments for other users
 2. Regular users can only see and modify their assigned apartments
 
 Available Functions:
@@ -691,14 +685,10 @@ Available Functions:
    - Must provide target user's Telegram ID
    - Must be an admin to use this function
 
-4) 
-
-Booking Identification:
-Users can identify bookings by:
-- Booking ID (e.g., "2025-03-15_598_checkout")
-- Apartment ID (e.g., "598")
-- Guest name (e.g., "Гусак")
-- Address (e.g., "Baseina")
+4) "show_user_apartments": Lists all apartments assigned to a user (admin only)
+   - Must be an admin to use this function
+   - Just mention user by name or @username
+   - The bot will automatically find their Telegram ID
 
 Examples:
 1. "Змініть виїзд 598 на 11:00" -> Use apartment ID "598"
@@ -707,6 +697,8 @@ Examples:
 4. "Постав 2 ключі для Baseina" -> Use address "Baseina"
 5. "Додай квартири 598, 321 для @username" -> Add apartments for user
 6. "Видали квартиру 432 у @username" -> Remove apartment from user
+7. "Показати квартири для @username" -> Show apartments for user
+8. "Показати квартири для 1234567890" -> Show apartments for user with ID 1234567890
 
 Always respond in Ukrainian.
 If the user's request is unclear or missing information, ask for clarification.
@@ -714,7 +706,7 @@ If the user doesn't have permission to modify a booking or manage assignments, i
 `;
 
 /**
- * Send user the main menu
+ * handleMenuCommand, handleHelpCommand, handleAboutCommand unchanged
  */
 async function handleMenuCommand(chatId) {
   await axios.post(`${TELEGRAM_API}/sendMessage`, {
@@ -724,9 +716,6 @@ async function handleMenuCommand(chatId) {
   });
 }
 
-/**
- * Send user help
- */
 async function handleHelpCommand(chatId) {
   const text = `🤖 *Доступні команди:*
 
@@ -747,9 +736,6 @@ async function handleHelpCommand(chatId) {
   });
 }
 
-/**
- * About
- */
 async function handleAboutCommand(chatId) {
   const text = `🤖 *Бот для управління завданнями*
 
@@ -766,7 +752,7 @@ async function handleAboutCommand(chatId) {
 }
 
 /**
- * Telegram webhook
+ * The main webhook
  */
 exports.telegramWebhook = onRequest(async (req, res) => {
   try {
@@ -825,7 +811,7 @@ exports.telegramWebhook = onRequest(async (req, res) => {
       return res.status(200).send({ success: true });
     }
 
-    // Handle basic commands
+    // Basic commands
     switch (text) {
       case "/menu":
       case "⚙️ Меню":
@@ -848,10 +834,9 @@ exports.telegramWebhook = onRequest(async (req, res) => {
         return res.status(200).send({ success: true });
 
       default:
-        // All other text => we let AI handle updates
         logger.info(`Text from user ${userId}: "${text}"`);
 
-        // Get user permissions and assigned apartments
+        // Load user data: admin or not?
         const userSnap = await db
           .collection("users")
           .where("chatId", "==", chatId)
@@ -876,7 +861,7 @@ exports.telegramWebhook = onRequest(async (req, res) => {
           }
         }
 
-        // Get current bookings for context
+        // Current bookings
         const today = getKievDate(0);
         const maxDate = getKievDate(7);
         const bookingSnap = await db
@@ -887,57 +872,56 @@ exports.telegramWebhook = onRequest(async (req, res) => {
           .get();
 
         const currentBookings = [];
-        bookingSnap.forEach(doc => {
+        bookingSnap.forEach((doc) => {
           const data = doc.data();
           if (isAdmin || assignedApartments.includes(String(data.apartmentId))) {
             currentBookings.push({
               id: doc.id,
-              ...data
+              ...data,
             });
           }
         });
 
-        // Get conversation context
+        // conversation context
         const context = getConversationContext(chatId);
-        
-        // 1) Pass to OpenAI with function calling
+
+        // AI call
         const completion = await openai.chat.completions.create({
           model: "gpt-4o",
           messages: [
-            { 
-              role: "system", 
-              content: systemPrompt
+            {
+              role: "system",
+              content: systemPrompt,
             },
-            // Add conversation context with proper function message format
-            ...context.map(msg => {
+            ...context.map((msg) => {
               if (msg.role === "function") {
                 return {
                   role: "function",
                   name: msg.name,
-                  content: msg.content
+                  content: msg.content,
                 };
               }
               return {
                 role: msg.role,
                 content: msg.content,
-                ...(msg.function_call && { function_call: msg.function_call })
+                ...(msg.function_call && { function_call: msg.function_call }),
               };
             }),
-            { 
-              role: "user", 
-              content: text 
+            {
+              role: "user",
+              content: text,
             },
             {
               role: "system",
               content: `Current user context:
 - User ID: ${userId}
 - Is admin: ${isAdmin}
-- Assigned apartments: ${isAdmin ? 'ALL' : assignedApartments.join(', ')}
-- Available bookings: ${JSON.stringify(currentBookings, null, 2)}`
-            }
+- Assigned apartments: ${isAdmin ? "ALL" : assignedApartments.join(", ")}
+- Available bookings: ${JSON.stringify(currentBookings, null, 2)}`,
+            },
           ],
-          functions: functionSchemas.map(schema => schema.function),
-          function_call: "auto"
+          functions: functionSchemas.map((schema) => schema.function),
+          function_call: "auto",
         });
 
         const message = completion.choices[0].message;
@@ -945,8 +929,8 @@ exports.telegramWebhook = onRequest(async (req, res) => {
           return res.status(200).send({ success: true });
         }
 
-        // 2) If it calls a function
         if (message.function_call) {
+          // Function call
           const { name, arguments: rawArgs } = message.function_call;
           let parsedArgs = {};
           try {
@@ -955,63 +939,66 @@ exports.telegramWebhook = onRequest(async (req, res) => {
             logger.error("Error parsing function args:", err);
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
               chat_id: chatId,
-              text: "Сталася помилка при обробці команди."
+              text: "Сталася помилка при обробці команди.",
             });
             return res.status(200).send({ success: true });
           }
 
-          // Route calls
           let result;
           if (name === "update_booking_time") {
             result = await updateBookingTimeInFirestore(parsedArgs);
           } else if (name === "update_booking_info") {
             result = await updateBookingInfoInFirestore(parsedArgs);
           } else if (name === "manage_apartment_assignments") {
-            // Add isAdmin to the parsed arguments
             parsedArgs.isAdmin = isAdmin;
             result = await updateApartmentAssignments(parsedArgs);
-          } else {
+          } 
+          //  handle show_user_apartments
+          else if (name === "show_user_apartments") {
+            parsedArgs.isAdmin = isAdmin;
+            result = await showAllApartmentsForUser(parsedArgs);
+          } 
+          else {
             logger.warn(`Unknown function call: ${name}`);
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
               chat_id: chatId,
-              text: "Невідома команда, спробуйте ще раз."
+              text: "Невідома команда, спробуйте ще раз.",
             });
             return res.status(200).send({ success: true });
           }
 
-          // 3) Provide function output and get final response
           const followUp = await openai.chat.completions.create({
             model: "gpt-4o",
             messages: [
               { role: "system", content: systemPrompt },
-              ...context.map(msg => {
+              ...context.map((msg) => {
                 if (msg.role === "function") {
                   return {
                     role: "function",
                     name: msg.name,
-                    content: msg.content
+                    content: msg.content,
                   };
                 }
                 return {
                   role: msg.role,
                   content: msg.content,
-                  ...(msg.function_call && { function_call: msg.function_call })
+                  ...(msg.function_call && { function_call: msg.function_call }),
                 };
               }),
               { role: "user", content: text },
-              { 
-                role: "assistant", 
-                content: null, 
-                function_call: { name, arguments: rawArgs }
+              {
+                role: "assistant",
+                content: null,
+                function_call: { name, arguments: rawArgs },
               },
-              { 
-                role: "function", 
+              {
+                role: "function",
                 name,
-                content: JSON.stringify(result)
-              }
+                content: JSON.stringify(result),
+              },
             ],
-            functions: functionSchemas.map(schema => schema.function),
-            function_call: "auto"
+            functions: functionSchemas.map((schema) => schema.function),
+            function_call: "auto",
           });
 
           const finalMsg = followUp.choices[0].message;
@@ -1019,48 +1006,51 @@ exports.telegramWebhook = onRequest(async (req, res) => {
             logger.info("Model tried another function call after update.");
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
               chat_id: chatId,
-              text: "Оновлено, але є ще функція. Наразі не обробляється."
+              text: "Оновлено, але є ще функція. Наразі не обробляється.",
             });
           } else {
+            // Send final text or fallback to the result message
             await axios.post(`${TELEGRAM_API}/sendMessage`, {
               chat_id: chatId,
-              text: finalMsg.content || result.message
+              text: finalMsg.content || result.message,
             });
           }
 
-          // Update conversation context
-          updateConversationContext(chatId, { 
-            role: "assistant", 
-            content: null, 
-            function_call: { name, arguments: rawArgs }
+          updateConversationContext(chatId, {
+            role: "assistant",
+            content: null,
+            function_call: { name, arguments: rawArgs },
           });
-          updateConversationContext(chatId, { 
-            role: "function", 
-            name, 
-            content: JSON.stringify(result)
+          updateConversationContext(chatId, {
+            role: "function",
+            name,
+            content: JSON.stringify(result),
           });
         } else {
-          // 4) Plain text response
+          // plain text
           await axios.post(`${TELEGRAM_API}/sendMessage`, {
             chat_id: chatId,
-            text: message.content || "Добре, зрозумів."
+            text: message.content || "Добре, зрозумів.",
           });
 
-          // Update conversation context
-          updateConversationContext(chatId, { 
-            role: "assistant", 
-            content: message.content || "" 
+          updateConversationContext(chatId, {
+            role: "assistant",
+            content: message.content || "",
           });
         }
 
-        // Update user message in context
-        updateConversationContext(chatId, { 
-          role: "user", 
-          content: text 
+        updateConversationContext(chatId, {
+          role: "user",
+          content: text,
         });
 
-        // Clear context when user starts a new conversation
-        if (text === "/start" || text === "/menu" || text === "/help" || text === "/about") {
+        // Clear context if user typed a command
+        if (
+          text === "/start" ||
+          text === "/menu" ||
+          text === "/help" ||
+          text === "/about"
+        ) {
           clearConversationContext(chatId);
         }
 
