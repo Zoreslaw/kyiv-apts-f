@@ -46,7 +46,7 @@ const mainMenuKeyboard = {
   resize_keyboard: true,
 };
 
-// Conversation context logic unchanged
+// Conversation context logic 
 const conversationContexts = new Map();
 
 function getConversationContext(chatId) {
@@ -70,7 +70,7 @@ function clearConversationContext(chatId) {
 }
 
 /**
- * getKievDate - unchanged
+ * getKievDate
  */
 function getKievDate(offsetDays = 0) {
   const nowInKiev = new Date(
@@ -84,7 +84,7 @@ function getKievDate(offsetDays = 0) {
 }
 
 /**
- * syncBookingsWithDatabase - unchanged
+ * syncBookingsWithDatabase
  */
 async function syncBookingsWithDatabase() {
   try {
@@ -184,7 +184,7 @@ async function syncBookingsWithDatabase() {
   }
 }
 
-// scheduledSyncBookings unchanged
+// scheduledSyncBookings 
 exports.scheduledSyncBookings = onSchedule(
   { schedule: "every 60 minutes" },
   async () => {
@@ -193,7 +193,7 @@ exports.scheduledSyncBookings = onSchedule(
 );
 
 /**
- * handleGetMyTasks - unchanged
+ * handleGetMyTasks
  */
 async function handleGetMyTasks(chatId) {
   try {
@@ -478,7 +478,7 @@ async function updateBookingInfoInFirestore({ bookingId, newSumToCollect, newKey
 //  Function to lookup user by name or username
 async function lookupUserByNameOrUsername(query) {
   try {
-    const normalized = query.replace(/^@/, "").trim().toLowerCase();
+    const normalized = query.replace(/^@/, "").trim();
     
     // 1) Try exact username match
     let snap = await db
@@ -838,7 +838,7 @@ If the user doesn't have permission to modify a booking or manage assignments, i
 `;
 
 /**
- * handleMenuCommand, handleHelpCommand, handleAboutCommand unchanged
+ * handleMenuCommand, handleHelpCommand, handleAboutCommand 
  */
 async function handleMenuCommand(chatId) {
   await axios.post(`${TELEGRAM_API}/sendMessage`, {
