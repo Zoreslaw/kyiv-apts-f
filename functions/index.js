@@ -338,10 +338,142 @@ async function handleGetMyTasks(chatId) {
 }
 
 /**
- * The booking update functions remain the same
- * updateBookingTimeInFirestore / updateBookingInfoInFirestore
- * manage_apartment_assignments
+ * Updates the check-in or check-out time for a booking
  */
+async function updateBookingTimeInFirestore({ bookingId, newTime, changeType, userId }) {
+  try {
+    logger.info(`Updating ${changeType} time to ${newTime} for booking ${bookingId} by user ${userId}`);
+    
+    // 1. Check if booking exists
+    const bookingRef = db.collection("bookings").doc(bookingId);
+    const doc = await bookingRef.get();
+    
+    if (!doc.exists) {
+      return {
+        success: false,
+        message: `Бронювання з ID ${bookingId} не знайдено.`,
+      };
+    }
+    
+    // 2. Validate time format (HH:00)
+    if (!/^([0-9]|0[0-9]|1[0-9]|2[0-3]):00$/.test(newTime)) {
+      return {
+        success: false,
+        message: `Недійсний формат часу: ${newTime}. Використовуйте формат "ГГ:00".`,
+      };
+    }
+    
+    // 3. Validate time constraints (checkout < 14:00, checkin > 14:00)
+    const hour = parseInt(newTime.split(":")[0], 10);
+    if (changeType === "checkout" && hour >= 14) {
+      return {
+        success: false,
+        message: `Час виїзду має бути раніше 14:00. Ви вказали: ${newTime}`,
+      };
+    }
+    
+    if (changeType === "checkin" && hour < 14) {
+      return {
+        success: false,
+        message: `Час заїзду має бути не раніше 14:00. Ви вказали: ${newTime}`,
+      };
+    }
+    
+    // 4. Update the booking
+    const updateField = changeType === "checkin" ? "checkinTime" : "checkoutTime";
+    await bookingRef.update({
+      [updateField]: newTime,
+      updatedAt: new Date(),
+      updatedBy: userId,
+    });
+    
+    // 5. Return success
+    return {
+      success: true,
+      message: changeType === "checkin"
+        ? `Час заїзду оновлено на ${newTime}.`
+        : `Час виїзду оновлено на ${newTime}.`,
+    };
+  } catch (err) {
+    logger.error(`Error updating ${changeType} time:`, err);
+    return {
+      success: false,
+      message: `Помилка при оновленні часу ${changeType === "checkin" ? "заїзду" : "виїзду"}. Спробуйте пізніше.`,
+    };
+  }
+}
+
+/**
+ * Updates the sumToCollect and/or keysCount for a booking
+ */
+async function updateBookingInfoInFirestore({ bookingId, newSumToCollect, newKeysCount, userId }) {
+  try {
+    logger.info(`Updating booking info for ${bookingId} by user ${userId}. Sum: ${newSumToCollect}, Keys: ${newKeysCount}`);
+    
+    // 1. Check if booking exists
+    const bookingRef = db.collection("bookings").doc(bookingId);
+    const doc = await bookingRef.get();
+    
+    if (!doc.exists) {
+      return {
+        success: false,
+        message: `Бронювання з ID ${bookingId} не знайдено.`,
+      };
+    }
+    
+    // 2. Prepare update object
+    const updateObj = {
+      updatedAt: new Date(),
+      updatedBy: userId,
+    };
+    
+    // 3. Add fields to update if provided
+    if (newSumToCollect !== null && newSumToCollect !== undefined) {
+      // Make sure it's a number
+      updateObj.sumToCollect = Number(newSumToCollect);
+    }
+    
+    if (newKeysCount !== null && newKeysCount !== undefined) {
+      // Make sure it's a number
+      updateObj.keysCount = Number(newKeysCount);
+    }
+    
+    // 4. Check if there's anything to update
+    if (Object.keys(updateObj).length <= 2) { // Just updatedAt and updatedBy
+      return {
+        success: false,
+        message: "Не вказано ні суму, ні кількість ключів для оновлення.",
+      };
+    }
+    
+    // 5. Update the booking
+    await bookingRef.update(updateObj);
+    
+    // 6. Prepare success message
+    let message = "Оновлено: ";
+    if (newSumToCollect !== null && newSumToCollect !== undefined) {
+      message += `сума до оплати - ${newSumToCollect} грн`;
+      if (newKeysCount !== null && newKeysCount !== undefined) {
+        message += ", ";
+      }
+    }
+    
+    if (newKeysCount !== null && newKeysCount !== undefined) {
+      message += `кількість ключів - ${newKeysCount}`;
+    }
+    
+    return {
+      success: true,
+      message,
+    };
+  } catch (err) {
+    logger.error("Error updating booking info:", err);
+    return {
+      success: false,
+      message: "Помилка при оновленні інформації про бронювання. Спробуйте пізніше.",
+    };
+  }
+}
 
 //  Function to lookup user by name or username
 async function lookupUserByNameOrUsername(query) {
