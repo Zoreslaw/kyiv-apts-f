@@ -1,7 +1,7 @@
-import { getFirestore, Firestore, DocumentData, QueryDocumentSnapshot } from "firebase-admin/firestore";
-import { ITaskData, Task } from "../models/Task"
+import { Firestore, DocumentData, QueryDocumentSnapshot } from "firebase-admin/firestore";
+import { ITaskData, Task } from "../models/Task";
+import { db } from "../config/firebase";
 
-const db: Firestore = getFirestore();
 const TASKS_COLLECTION = "tasks";
 
 async function findTasksByUserId(userId: string): Promise<Task[]> {

@@ -1,7 +1,7 @@
-import { getFirestore, Firestore, DocumentReference, DocumentData, QuerySnapshot } from "firebase-admin/firestore";
+import { getFirestore, Firestore, DocumentReference, DocumentData, QuerySnapshot, Timestamp } from "firebase-admin/firestore";
 import { Apartment, IApartmentData } from "../models/Apartment";
+import { db } from "../config/firebase";
 
-const db: Firestore = getFirestore();
 const APARTMENTS_COLLECTION = "apartments";
 
 function dataToApartment(data: DocumentData, id: string): Apartment {

@@ -1,11 +1,12 @@
-import { getFirestore } from "firebase-admin/firestore";
+import { Timestamp } from "firebase-admin/firestore";
+import { db } from "../config/firebase";
 import { CleaningAssignment } from "../models/CleaningAssignment";
 
-const db = getFirestore();
+const CLEANING_ASSIGNMENTS_COLLECTION = "cleaningAssignments";
 
 export async function findByUserId(userId: string): Promise<CleaningAssignment | null> {
   const snapshot = await db
-    .collection("cleaningAssignments")
+    .collection(CLEANING_ASSIGNMENTS_COLLECTION)
     .where("userId", "==", userId)
     .limit(1)
     .get();
@@ -22,7 +23,7 @@ export async function findByUserId(userId: string): Promise<CleaningAssignment |
 }
 
 export async function createAssignment(data: Omit<CleaningAssignment, "id">): Promise<CleaningAssignment> {
-  const docRef = await db.collection("cleaningAssignments").add(data);
+  const docRef = await db.collection(CLEANING_ASSIGNMENTS_COLLECTION).add(data);
   return {
     id: docRef.id,
     ...data,
@@ -33,5 +34,5 @@ export async function updateAssignment(
   id: string,
   data: Partial<Omit<CleaningAssignment, "id">>
 ): Promise<void> {
-  await db.collection("cleaningAssignments").doc(id).update(data);
+  await db.collection(CLEANING_ASSIGNMENTS_COLLECTION).doc(id).update(data);
 } 

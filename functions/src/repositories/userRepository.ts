@@ -1,8 +1,8 @@
 // Repository for accessing User data in Firestore
-import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { Timestamp } from 'firebase-admin/firestore';
 import { User, IUserData } from '../models/User';
+import { db } from '../config/firebase';
 
-const db = getFirestore();
 const USERS_COLLECTION = "users";
 
 type UserUpdateData = Partial<Omit<IUserData, 'id'>>;

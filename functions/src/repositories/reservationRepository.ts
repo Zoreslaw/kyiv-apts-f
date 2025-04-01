@@ -1,7 +1,7 @@
-import { getFirestore, Timestamp, QueryDocumentSnapshot } from "firebase-admin/firestore";
-import { Reservation, IReservationData } from "../models/Reservation";
+import { Timestamp, QueryDocumentSnapshot } from "firebase-admin/firestore";
+import { db } from "../config/firebase";
+import { IReservationData, Reservation } from "../models/Reservation";
 
-const db = getFirestore();
 const RESERVATIONS_COLLECTION = "reservations";
 
 async function findById(reservationId: string): Promise<Reservation | null> {
