@@ -2,6 +2,8 @@ import { Timestamp } from "firebase-admin/firestore";
 import { findTasksByUserId, updateTask } from "../repositories/taskRepository";
 import { Task, ITaskData } from "../models/Task";
 import { TaskStatuses, TaskTypes } from "../utils/constants";
+import { logger } from "firebase-functions";
+import { findOrCreateUser } from "./userService";
 
 async function getTasksForUser(userId: string): Promise<Task[]> {
   return findTasksByUserId(userId);
@@ -73,6 +75,41 @@ export class TaskService {
     }
 
     return msg;
+  }
+
+  async getTasksForUser(chatId: number): Promise<{ success: boolean; message?: string; tasks?: Task[] }> {
+    try {
+      logger.info(`Loading tasks for user with chatId=${chatId}`);
+
+      const user = await findOrCreateUser({
+        id: chatId,
+      });
+      if (!user) {
+        return {
+          success: false,
+          message: "Ти не зареєстрований у системі. Будь ласка, скористайся командою /start."
+        };
+      }
+
+      const tasks = await findTasksByUserId(user.id);
+      if (tasks.length === 0) {
+        return {
+          success: false,
+          message: "На тебе не додано жодних завдань. :("
+        };
+      }
+
+      return {
+        success: true,
+        tasks
+      };
+    } catch (err) {
+      logger.error("Error in getTasksForUser:", err);
+      return {
+        success: false,
+        message: "Помилка при отриманні завдань. Спробуйте пізніше."
+      };
+    }
   }
 }
 

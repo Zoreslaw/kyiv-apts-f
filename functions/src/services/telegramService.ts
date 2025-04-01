@@ -91,26 +91,20 @@ export class TelegramService {
 
   async handleGetMyTasks(chatId: number): Promise<void> {
     try {
-      logger.info(`Loading tasks for user with chatId=${chatId}`);
-
-      const user = await findOrCreateUser({
-        id: chatId,
-      });
-      if (!user) {
-        await this.sendMessage(chatId, "Ти не зареєстрований у системі. Будь ласка, скористайся командою /start.");
+      const result = await this.taskService.getTasksForUser(chatId);
+      
+      if (!result.success) {
+        await this.sendMessage(chatId, result.message || "Помилка при отриманні завдань.");
         return;
       }
 
-      const isAdmin = user.isAdmin();
-      const tasks = await getTasksForUser(user.id);
-
-      if (tasks.length === 0) {
-        await this.sendMessage(chatId, "На тебе не додано жодних завдань. :(");
+      if (!result.tasks) {
+        await this.sendMessage(chatId, "Немає завдань на найближчі дні.");
         return;
       }
 
       // Group tasks by date
-      const grouped = this.taskService.groupTasksByDate(tasks);
+      const grouped = this.taskService.groupTasksByDate(result.tasks);
       const allDates = Object.keys(grouped).sort();
 
       if (allDates.length === 0) {
