@@ -71,6 +71,8 @@ function clearConversationContext(chatId) {
 
 /**
  * getKievDate
+ * @ARICK: The best way to work with dates is Moment.js
+ * Let's use it in the future.
  */
 function getKievDate(offsetDays = 0) {
   const nowInKiev = new Date(
@@ -85,6 +87,9 @@ function getKievDate(offsetDays = 0) {
 
 /**
  * syncBookingsWithDatabase
+ * @ARICK: This functions is too big. Let's refactor it. 
+ * Try to strive to functions with single responsibility. Usually it's better to split.
+ * Functions should be small and easy to understand.
  */
 async function syncBookingsWithDatabase() {
   try {
@@ -205,6 +210,8 @@ async function handleGetMyTasks(chatId) {
       .where("chatId", "==", chatId)
       .limit(1)
       .get();
+
+    // @ARICK: We should create an interface to easier use telegram api.
     if (userSnap.empty) {
       await axios.post(`${TELEGRAM_API}/sendMessage`, {
         chat_id: chatId,
