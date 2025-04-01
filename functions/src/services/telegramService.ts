@@ -73,19 +73,12 @@ export class TelegramService {
     logger.info(`New user: ${firstName} (ID=${userId})`);
 
     // Check if user exists
-    let user = await findOrCreateUser({
+    await findOrCreateUser({
       id: userId,
+      first_name: firstName,
+      last_name: lastName,
+      username: username
     });
-    
-    if (!user) {
-      // Create new user
-      user = await findOrCreateUser({
-        id: userId,
-        first_name: firstName,
-        last_name: lastName,
-        username: username
-      });
-    }
 
     await this.sendMessage(chat.id, "🔄 Синхронізую дані з базою... Це може зайняти кілька секунд.");
     await this.sendMessage(
@@ -204,6 +197,9 @@ export class TelegramService {
     // Load user data
     const user = await findOrCreateUser({
       id: chat.id,
+      first_name: from.first_name,
+      last_name: from.last_name,
+      username: from.username
     });
     if (!user) {
       await this.sendMessage(chat.id, "Ти не зареєстрований у системі. Будь ласка, скористайся командою /start.");

@@ -11,6 +11,11 @@ interface TelegramUser {
   username?: string;
 }
 
+async function isUserRegistered(telegramId: number | string): Promise<boolean> {
+  const user = await findByTelegramId(telegramId);
+  return user !== null;
+}
+
 async function findOrCreateUser(telegramUser: TelegramUser): Promise<User> {
   const { id, first_name, last_name, username } = telegramUser;
   let user = await findByTelegramId(id);
@@ -87,5 +92,6 @@ export {
   findOrCreateUser,
   updateUserChatId,
   getUserWithPermissions,
-  type UserWithPermissions
+  type UserWithPermissions,
+  isUserRegistered
 }; 
