@@ -1,53 +1,91 @@
 // Service for managing user data and permissions
-const userRepository = require("../repositories/userRepository");
-const { UserRoles } = require("../utils/constants");
+import { Timestamp } from "firebase-admin/firestore";
+import { findByTelegramId, createUser, updateUser } from "../repositories/userRepository";
+import { User, IUserData } from "../models/User";
+import { UserRoles } from "../utils/constants";
 
-async function findOrCreateUser(telegramUser) {
+interface TelegramUser {
+  id: number;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+}
+
+async function findOrCreateUser(telegramUser: TelegramUser): Promise<User> {
   const { id, first_name, last_name, username } = telegramUser;
-  let user = await userRepository.findByTelegramId(id);
+  let user = await findByTelegramId(id);
   if (!user) {
     console.log(`Creating new user: ${first_name} (ID=${id})`);
-    const newUser = {
+    const newUser: Omit<IUserData, 'id'> = {
       telegramId: String(id),
-      chatId: null, // Will be set on first interaction needing response
+      chatId: null,
       firstName: first_name || "",
       lastName: last_name || "",
       username: username || "",
       role: UserRoles.CLEANER, // Default role
       status: "active",
       assignedApartmentIds: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
     };
-    user = await userRepository.createUser(newUser);
+    user = await createUser(newUser);
   }
   return user;
 }
 
-async function updateUserChatId(telegramId, chatId) {
-  const user = await userRepository.findByTelegramId(telegramId);
+async function updateUserChatId(telegramId: number | string, chatId: number): Promise<User | null> {
+  const user = await findByTelegramId(telegramId);
   if (user && user.chatId !== chatId) {
-    return userRepository.updateUser(user.id, { chatId, updatedAt: new Date() });
+    return updateUser(user.id, { chatId, updatedAt: Timestamp.now() });
   }
   return user;
 }
 
-async function getUserWithPermissions(telegramId) {
-  const user = await userRepository.findByTelegramId(telegramId);
+interface UserWithPermissions {
+  id: string;
+  telegramId: string;
+  chatId: number | null;
+  firstName: string;
+  lastName: string | null;
+  username: string | null;
+  role: UserRoles;
+  status: string;
+  assignedApartmentIds: string[];
+  createdAt: Timestamp | Date;
+  updatedAt: Timestamp | Date;
+  isAdmin: boolean;
+  isManager: boolean;
+  isCleaner: boolean;
+}
+
+async function getUserWithPermissions(telegramId: number | string): Promise<UserWithPermissions | null> {
+  const user = await findByTelegramId(telegramId);
   if (!user) return null;
-  // Add more complex permission logic if needed
+  
+  // Converting User class to UserWithPermissions
   return {
-    ...user,
-    isAdmin: user.role === UserRoles.ADMIN,
-    isManager: user.role === UserRoles.MANAGER,
-    isCleaner: user.role === UserRoles.CLEANER,
+    id: user.id,
+    telegramId: user.telegramId,
+    chatId: user.chatId,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    username: user.username,
+    role: user.role,
+    status: user.status,
+    assignedApartmentIds: user.assignedApartmentIds,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    isAdmin: user.isAdmin(),
+    isManager: user.isManager(),
+    isCleaner: user.isCleaner(),
   };
 }
 
 // Add functions for assigning apartments, changing roles etc. (maybe move to assignmentService)
 
-module.exports = {
+export {
   findOrCreateUser,
   updateUserChatId,
   getUserWithPermissions,
+  type UserWithPermissions
 }; 

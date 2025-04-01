@@ -45,9 +45,11 @@ export class User implements IUserData {
     isAdmin(): boolean {
         return this.role === UserRoles.ADMIN;
     }
+
     isManager(): boolean {
         return this.role === UserRoles.MANAGER;
     }
+    
     isCleaner(): boolean {
         return this.role === UserRoles.CLEANER;
     }

@@ -96,8 +96,8 @@ async function sendMessage(chatId: number, text: string, options: SendMessageOpt
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: chatId,
       text,
-      parse_mode: "Markdown", // Default parse mode
-      ...options, // Pass other options like reply_markup
+      parse_mode: "Markdown",
+      ...options,
     });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error 
@@ -115,10 +115,7 @@ async function sendMessage(chatId: number, text: string, options: SendMessageOpt
   }
 }
 
-// Add other helper functions for editMessageText, answerCallbackQuery etc.
-
 export {
   handleTelegramWebhook,
   sendMessage,
-  // ... other telegram interaction functions
 }; 
