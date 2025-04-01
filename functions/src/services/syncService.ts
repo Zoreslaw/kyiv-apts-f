@@ -25,18 +25,21 @@ interface CmsData {
   [key: string]: any;
 }
 
+interface CMSResponse {
+  response: Record<string, CmsData[]>;
+}
+
 async function fetchFromCMS(endpoint: string): Promise<Record<string, CmsData[]>> {
   try {
-    const response = await axios.get(`${CMS_API_BASE}/${endpoint}`);
-    // Basic validation - adapt based on actual API response structure
-    if (response.data && response.data.response) {
+    const response = await axios.get<CMSResponse>(`${CMS_API_BASE}/${endpoint}`);
+    if (response.data?.response) {
       return response.data.response;
     }
     console.warn(`CMS endpoint ${endpoint} returned unexpected data:`, response.data);
-    return {}; // Return empty object on failure/unexpected format
+    return {};
   } catch (error) {
     console.error(`Error fetching from CMS endpoint ${endpoint}:`, error);
-    return {}; // Return empty object on error
+    return {};
   }
 }
 

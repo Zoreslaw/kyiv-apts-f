@@ -4,7 +4,7 @@ const { syncReservationsAndTasks } = require("../services/syncService"); // Exam
 
 exports.scheduledSync = functions.pubsub
   .schedule("every 60 minutes") // Adjust schedule as needed
-  .onRun(async (context) => {
+  .onRun(async (context: any) => {
     try {
       console.log("Running scheduled sync...");
       await syncReservationsAndTasks();
