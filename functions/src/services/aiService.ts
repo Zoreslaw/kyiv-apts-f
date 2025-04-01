@@ -1,6 +1,5 @@
-// Service for interacting with OpenAI (if needed for NLP commands)
-const OpenAI = require("openai");
-const { defineString } = require("firebase-functions/params");
+import { OpenAI } from "openai";
+import { defineString } from "firebase-functions/params";
 
 // Params
 const openaiApiKey = defineString("OPENAI_API_KEY");
@@ -12,7 +11,11 @@ const openai = new OpenAI({
 // TODO: Define function schemas, system prompt etc.
 // Adapt the logic from the old index.js
 
-async function interpretUserRequest(text, context = []) {
+interface UserRequestResponse {
+  content: string;
+}
+
+async function interpretUserRequest(text: string, context: any[] = []): Promise<UserRequestResponse> {
   // Placeholder - adapt OpenAI call from old index.js
   console.log("Interpreting user request (AI):", text);
   // const completion = await openai.chat.completions.create({ ... });
@@ -20,7 +23,7 @@ async function interpretUserRequest(text, context = []) {
   return { content: "AI processing not fully implemented yet." };
 }
 
-module.exports = {
+export {
   interpretUserRequest,
   // ... other AI related functions
 }; 

@@ -1,16 +1,31 @@
-// Service for syncing data with external CMS and creating tasks
-const axios = require("axios");
-const functions = require("firebase-functions");
-const reservationRepository = require("../repositories/reservationRepository");
-const taskRepository = require("../repositories/taskRepository");
-const apartmentRepository = require("../repositories/apartmentRepository");
-const { getKievDate } = require("../utils/dateTime");
-const { TaskTypes, TaskStatuses } = require("../utils/constants");
+import axios from "axios";
+import * as functions from "firebase-functions";
+import { Timestamp } from "firebase-admin/firestore";
+import { findById, createReservation } from "../repositories/reservationRepository";
+import { findById as findTaskById, updateTask, createTask } from "../repositories/taskRepository";
+import { findAllApartments, findApartmentById } from "../repositories/apartmentRepository";
+import { getKievDate } from "../utils/dateTime";
+import { TaskTypes, TaskStatuses } from "../utils/constants";
+import { Apartment, IApartmentData } from "../models/Apartment";
+import { ITaskData, Task } from "../models/Task";
+import { IReservationData, Reservation } from "../models/Reservation";
 
 // Placeholder for CMS API base URL - move to config/env
 const CMS_API_BASE = "https://kievapts.com/api/1.1/json";
 
-async function fetchFromCMS(endpoint) {
+interface CmsData {
+  booking_id?: string;
+  apartment_id: string;
+  guest_name?: string;
+  guest_contact?: string;
+  source?: string;
+  sumToCollect?: number;
+  keys_count?: number;
+  apartment_address?: string;
+  [key: string]: any;
+}
+
+async function fetchFromCMS(endpoint: string): Promise<Record<string, CmsData[]>> {
   try {
     const response = await axios.get(`${CMS_API_BASE}/${endpoint}`);
     // Basic validation - adapt based on actual API response structure
@@ -26,38 +41,29 @@ async function fetchFromCMS(endpoint) {
 }
 
 // The main sync logic - to be called by the scheduled trigger
-async function syncReservationsAndTasks() {
+async function syncReservationsAndTasks(): Promise<void> {
   console.log("Starting reservation and task sync...");
 
   // --- 1. Fetch data from CMS --- //
   // Fetch for a relevant period (e.g., yesterday, today, next few days)
-  // Note: Original code only fetched checkins/checkouts for specific dates.
-  // A more robust sync might need a different CMS endpoint or logic
-  // to get all relevant *reservations* within a date range.
-  // Let's stick to the checkin/checkout model for now.
-
   const today = getKievDate(0);
   // Add relevant dates - adjust range as needed
   const datesToFetch = [getKievDate(-1), today, getKievDate(1), getKievDate(2)];
 
-  const allCheckouts = {};
-  const allCheckins = {};
-
   // This part is inefficient if the API supports date ranges.
-  // If API *only* supports /checkouts and /checkins (implies specific date),
-  // we have to call it per date.
-  // **ASSUMPTION:** API provides data *for a specific date implicitly* or requires date param.
   // The old code structure implies the API endpoints are `/checkouts` and `/checkins` returning
-  // data grouped *by date* within the response. Let's stick to that.
+  // data grouped *by date* within the response.
   console.log("Fetching checkouts from CMS...");
-  const checkoutsResponse = await fetchFromCMS("checkouts"); // Assuming this returns data for multiple dates
+  const checkoutsResponse = await fetchFromCMS("checkouts");
   console.log("Fetching checkins from CMS...");
-  const checkinsResponse = await fetchFromCMS("checkins"); // Assuming this returns data for multiple dates
+  const checkinsResponse = await fetchFromCMS("checkins");
 
   // --- 2. Process and Upsert Reservations & Tasks --- //
-  const processedReservationIds = new Set();
-  const apartments = await apartmentRepository.getAllApartments(); // Cache apartments
-  const apartmentMap = new Map(apartments.map(apt => [String(apt.id), apt]));
+  const processedReservationIds = new Set<string>();
+  const apartments = await findAllApartments();
+  const apartmentMap = new Map<string, Apartment>(
+    apartments.map((apt: Apartment) => [String(apt.id), apt])
+  );
 
   const allDates = [...new Set([
       ...Object.keys(checkoutsResponse),
@@ -73,8 +79,29 @@ async function syncReservationsAndTasks() {
           const reservationData = mapCmsToReservation(cmsCheckout, date, "checkout");
           const apartment = apartmentMap.get(String(reservationData.apartmentId));
 
-          // Upsert Reservation
-          const reservation = await reservationRepository.upsertReservation(reservationData);
+          // Upsert Reservation - since there's no upsertReservation in the repository
+          // we'll check if it exists and create if not
+          let reservation: Reservation;
+          const existingReservation = reservationData.id 
+            ? await findById(reservationData.id) 
+            : null;
+            
+          if (existingReservation) {
+            // Update logic would go here if needed
+            reservation = existingReservation;
+          } else {
+            // Add timestamps for new reservations
+            const now = Timestamp.now();
+            // Generate an ID for new reservations
+            const reservationId = `${cmsCheckout.apartment_id}_${date}_checkout`;
+            reservation = await createReservation({
+              ...reservationData,
+              id: reservationId, // Ensure ID is set
+              createdAt: now,
+              updatedAt: now
+            } as IReservationData);
+          }
+          
           processedReservationIds.add(reservation.id);
 
           // Create or Update Checkout Task
@@ -86,8 +113,28 @@ async function syncReservationsAndTasks() {
            const reservationData = mapCmsToReservation(cmsCheckin, date, "checkin");
            const apartment = apartmentMap.get(String(reservationData.apartmentId));
 
-          // Upsert Reservation - might be the same reservation as checkout if same day
-          const reservation = await reservationRepository.upsertReservation(reservationData);
+          // Upsert Reservation - same approach as above
+          let reservation: Reservation;
+          const existingReservation = reservationData.id 
+            ? await findById(reservationData.id) 
+            : null;
+            
+          if (existingReservation) {
+            // Update logic would go here if needed
+            reservation = existingReservation;
+          } else {
+            // Add timestamps for new reservations
+            const now = Timestamp.now();
+            // Generate an ID for new reservations
+            const reservationId = `${cmsCheckin.apartment_id}_${date}_checkin`;
+            reservation = await createReservation({
+              ...reservationData,
+              id: reservationId, // Ensure ID is set 
+              createdAt: now,
+              updatedAt: now
+            } as IReservationData);
+          }
+          
           processedReservationIds.add(reservation.id);
 
           // Create or Update Checkin Task
@@ -98,70 +145,78 @@ async function syncReservationsAndTasks() {
   // --- 3. Optional: Handle Cancellations/Clean-up --- //
   // Find tasks/reservations in Firestore for the synced date range that *were not* processed.
   // This indicates they might be cancelled in the CMS.
-  // Mark them as cancelled or flag for review.
-  // This logic needs careful implementation to avoid accidental cancellations.
   console.log(`Sync processed ${processedReservationIds.size} reservations.`);
 
   console.log("Reservation and task sync finished.");
 }
 
 // Helper to map CMS data to our Reservation model structure
-function mapCmsToReservation(cmsData, date, type) {
+function mapCmsToReservation(cmsData: CmsData, date: string, type: string): Partial<IReservationData> {
     // Adjust field names based on your actual CMS API response
-    const reservation = {
-        cmsBookingId: cmsData.booking_id || `${date}_${cmsData.apartment_id}`, // NEED a stable booking ID from CMS
+    const reservation: Partial<IReservationData> = {
+        id: cmsData.booking_id, // Only set if we have a stable ID
         apartmentId: String(cmsData.apartment_id),
         guestName: cmsData.guest_name || "Unknown",
         guestContact: cmsData.guest_contact || null,
         // We only get checkin/checkout day from these endpoints, not full stay range
-        // This model might need adjustment if CMS provides full stay dates elsewhere
-        checkinDate: type === "checkin" ? date : null, // Or fetch full reservation details?
-        checkoutDate: type === "checkout" ? date : null,
         bookingSource: cmsData.source || null,
         sumToCollect: Number(cmsData.sumToCollect) || 0,
         keysCount: Number(cmsData.keys_count) || 1,
-        // Timestamps managed by Firestore
     };
-    // Clean out null checkin/checkout dates if not applicable
-    if (!reservation.checkinDate) delete reservation.checkinDate;
-    if (!reservation.checkoutDate) delete reservation.checkoutDate;
+
+    // Set the appropriate date field
+    if (type === "checkin") {
+      reservation.checkinDate = date;
+    } else if (type === "checkout") {
+      reservation.checkoutDate = date;
+    }
+
     return reservation;
 }
 
 // Helper to create or update a Task based on CMS data
-async function createOrUpdateTaskFromCmsData(reservation, cmsData, taskType, date, apartment) {
+async function createOrUpdateTaskFromCmsData(
+  reservation: Reservation, 
+  cmsData: CmsData, 
+  taskType: TaskTypes, 
+  date: string, 
+  apartment?: Apartment
+): Promise<void> {
     // Task ID strategy: e.g., `${reservation.id}_${taskType}`
     const taskId = `${reservation.id}_${taskType}`;
-    const existingTask = await taskRepository.findById(taskId);
+    const existingTask = await findTaskById(taskId);
 
-    const taskData = {
+    const taskData: Partial<ITaskData> = {
+        id: taskId,
         reservationId: reservation.id,
         apartmentId: reservation.apartmentId,
-        address: apartment?.address || cmsData.apartment_address || "Address Missing", // Get from apartmentMap or CMS
+        address: apartment?.address || cmsData.apartment_address || "Address Missing",
         taskType: taskType,
-        dueDate: date, // The day the task needs to happen
-        // Initial status - adjust as needed
+        dueDate: date,
         status: existingTask ? existingTask.status : TaskStatuses.PENDING,
-        notes: `Guest: ${reservation.guestName}. Collect: ${reservation.sumToCollect}. Keys: ${reservation.keysCount}.`, // Example notes
-        // assignedStaffId will be set later by assignment logic or manually
-        // Keep existing timestamps if updating
-        createdAt: existingTask ? existingTask.createdAt : new Date(),
-        updatedAt: new Date(),
-        // maybe add cmsLastUpdatedAt: cmsData.last_updated_timestamp // if available
+        notes: `Guest: ${reservation.guestName}. Collect: ${reservation.sumToCollect}. Keys: ${reservation.keysCount}.`,
+        sumToCollect: reservation.sumToCollect,
+        keysCount: reservation.keysCount,
+        updatedAt: Timestamp.now(),
     };
 
     if (existingTask) {
         console.log(`Updating existing task: ${taskId}`);
         // Only update certain fields from CMS, preserve operational data
-        const { status, assignedStaffId, notes, ...restOfExisting } = existingTask; // Keep existing status, assignee, notes
-        await taskRepository.updateTask(taskId, { ...restOfExisting, ...taskData }); // Overwrite with fresh CMS-derived data, keeping status etc.
+        const { status, assignedStaffId, notes, ...restToUpdate } = taskData;
+        await updateTask(taskId, restToUpdate);
     } else {
         console.log(`Creating new task: ${taskId}`);
-        await taskRepository.createTask({ ...taskData });
-        // If creating, maybe trigger assignment logic?
+        const now = Timestamp.now();
+        await createTask({
+          ...taskData,
+          createdAt: now,
+          updatedAt: now,
+          id: taskId
+        } as ITaskData);
     }
 }
 
-module.exports = {
+export {
   syncReservationsAndTasks,
 }; 

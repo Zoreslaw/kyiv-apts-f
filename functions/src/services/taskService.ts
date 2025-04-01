@@ -1,20 +1,21 @@
-// Service for managing tasks (check-in, check-out, cleaning)
-const taskRepository = require("../repositories/taskRepository");
+import { Timestamp } from "firebase-admin/firestore";
+import { findTasksByUserId, updateTask } from "../repositories/taskRepository";
+import { Task, ITaskData } from "../models/Task";
+import { TaskStatuses } from "../utils/constants";
 
-// Example function
-async function getTasksForUser(userId) {
-  // Add logic to check user role, etc.
-  return taskRepository.findTasksByUserId(userId);
+async function getTasksForUser(userId: string): Promise<Task[]> {
+  return findTasksByUserId(userId);
 }
 
-// Example function
-async function updateTaskStatus(taskId, status, userId) {
-  // Add validation and permission checks
-  return taskRepository.updateTask(taskId, { status, updatedAt: new Date(), updatedBy: userId });
+async function updateTaskStatus(taskId: string, status: TaskStatuses, userId: string): Promise<Task | null> {
+  return updateTask(taskId, { 
+    status, 
+    updatedAt: Timestamp.now(), 
+    updatedBy: userId 
+  });
 }
 
-module.exports = {
+export {
   getTasksForUser,
   updateTaskStatus,
-  // ... other task related business logic
 }; 

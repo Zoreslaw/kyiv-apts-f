@@ -1,12 +1,13 @@
-// Service for handling reservation data (potentially syncing from CMS)
-const reservationRepository = require("../repositories/reservationRepository");
+import * as reservationRepository from "../repositories/reservationRepository";
 
-// Example function
-async function getReservationById(reservationId) {
+interface Reservation {
+  id: string;
+}
+
+async function getReservationById(reservationId: string): Promise<Reservation | null> {
   return reservationRepository.findById(reservationId);
 }
 
-module.exports = {
+export {
   getReservationById,
-  // ... other reservation related logic (maybe less needed if syncService handles CMS interaction)
 }; 
