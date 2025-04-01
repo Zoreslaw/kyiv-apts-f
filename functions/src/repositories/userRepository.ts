@@ -8,15 +8,36 @@ const USERS_COLLECTION = "users";
 type UserUpdateData = Partial<Omit<IUserData, 'id'>>;
 
 async function findByTelegramId(telegramId: string | number): Promise<User | null> {
-  const snapshot = await db.collection(USERS_COLLECTION)
-                         .where("telegramId", "==", String(telegramId))
-                         .limit(1)
-                         .get();
-  if (snapshot.empty) {
+  try {
+    const normalizedId = String(telegramId);
+    
+    // Try by userId first
+    let snap = await db
+      .collection("users")
+      .where("userId", "==", parseInt(normalizedId))
+      .limit(1)
+      .get();
+    
+    if (!snap.empty) {
+      return new User(snap.docs[0].data() as IUserData);
+    }
+
+    // Try by chatId
+    snap = await db
+      .collection("users")
+      .where("chatId", "==", parseInt(normalizedId))
+      .limit(1)
+      .get();
+    
+    if (!snap.empty) {
+      return new User(snap.docs[0].data() as IUserData);
+    }
+
+    return null;
+  } catch (error) {
+    console.error("Error in findByTelegramId:", error);
     return null;
   }
-  const doc = snapshot.docs[0];
-  return new User({ id: doc.id, ...doc.data() } as IUserData);
 }
 
 async function createUser(userData: Omit<IUserData, 'id'>): Promise<User> {
@@ -53,6 +74,47 @@ async function findByUsernameOrName(query: string): Promise<User | null> {
   if (!snapshot.empty) return new User({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as IUserData);
 
   return null;
+}
+
+export async function lookupUserByNameOrUsername(query: string): Promise<User | null> {
+  try {
+    const normalized = query.replace(/^@/, "").trim();
+    
+    // 1) Try exact username match
+    let snap = await db
+      .collection("users")
+      .where("username", "==", normalized)
+      .limit(1)
+      .get();
+    if (!snap.empty) {
+      return new User(snap.docs[0].data() as IUserData);
+    }
+
+    // 2) Try exact firstName
+    snap = await db
+      .collection("users")
+      .where("firstName", "==", normalized)
+      .limit(1)
+      .get();
+    if (!snap.empty) {
+      return new User(snap.docs[0].data() as IUserData);
+    }
+
+    // 3) Try exact lastName
+    snap = await db
+      .collection("users")
+      .where("lastName", "==", normalized)
+      .limit(1)
+      .get();
+    if (!snap.empty) {
+      return new User(snap.docs[0].data() as IUserData);
+    }
+
+    return null;
+  } catch (error) {
+    console.error("Error in lookupUserByNameOrUsername:", error);
+    return null;
+  }
 }
 
 export {

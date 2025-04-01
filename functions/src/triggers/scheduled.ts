@@ -1,16 +1,22 @@
 // Handles scheduled function triggers
-const functions = require("firebase-functions");
-const { syncReservationsAndTasks } = require("../services/syncService"); // Example dependency
+import { onSchedule } from "firebase-functions/v2/scheduler";
+import { logger } from "firebase-functions";
+import { syncReservationsAndTasks } from "../services/syncService";
 
-exports.scheduledSync = functions.pubsub
-  .schedule("every 60 minutes") // Adjust schedule as needed
-  .onRun(async (context: any) => {
+/**
+ * Scheduled function to sync reservations and tasks from CMS
+ * Runs every 60 minutes
+ */
+export const scheduledSync = onSchedule(
+  { schedule: "every 60 minutes" },
+  async (event) => {
     try {
-      console.log("Running scheduled sync...");
+      logger.info("Starting scheduled sync...");
       await syncReservationsAndTasks();
-      console.log("Scheduled sync completed.");
+      logger.info("Scheduled sync completed successfully.");
     } catch (error) {
-      console.error("Error in scheduledSync trigger:", error);
-      // Error reporting (e.g., to Error Reporting service)
+      logger.error("Error in scheduledSync trigger:", error);
+      throw error; // Rethrow to mark the function as failed
     }
-  }); 
+  }
+); 
