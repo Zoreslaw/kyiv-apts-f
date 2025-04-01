@@ -528,13 +528,14 @@ async function updateApartmentAssignments({ targetUserId, action, apartmentIds, 
       };
     }
 
-    // If targetUserId is not numeric, try lookup
+    // If not numeric, try lookup
     if (!/^\d+$/.test(targetUserId)) {
       const foundUser = await lookupUserByNameOrUsername(targetUserId);
+      logger.info(`Found user: ${JSON.stringify(foundUser)}`);
       if (!foundUser) {
         return {
           success: false,
-          message: `Не знайдено користувача за запитом '${targetUserId}'.`,
+          message: `Не знайшов користувача за запитом '${targetUserId}'.`,
         };
       }
       targetUserId = String(foundUser.userId);
@@ -542,7 +543,7 @@ async function updateApartmentAssignments({ targetUserId, action, apartmentIds, 
 
     const targetSnap = await db
       .collection("users")
-      .where("userId", "==", targetUserId)
+      .where("userId", "==", parseInt(targetUserId))
       .limit(1)
       .get();
 
@@ -552,6 +553,9 @@ async function updateApartmentAssignments({ targetUserId, action, apartmentIds, 
         message: "Користувача не знайдено в базі.",
       };
     }
+
+    const targetUserData = targetSnap.docs[0].data();
+    logger.info(`Target user data: ${JSON.stringify(targetUserData)}`);
 
     const assignmentSnap = await db
       .collection("cleaningAssignments")
@@ -590,11 +594,12 @@ async function updateApartmentAssignments({ targetUserId, action, apartmentIds, 
     });
 
     const actionText = action === "add" ? "додано" : "видалено";
+    const displayName = targetUserData.username || targetUserData.firstName || targetUserId;
     return {
       success: true,
       message: `Успішно ${actionText} квартири ${apartmentIds.join(", ")} ${
         action === "add" ? "до" : "у"
-      } користувача ${targetUserId}.`,
+      } користувача ${displayName}.`,
     };
   } catch (err) {
     logger.error("Error updating apartment assignments:", err);
@@ -619,6 +624,7 @@ async function showAllApartmentsForUser({ targetUserId, isAdmin }) {
     // If not numeric, try lookup
     if (!/^\d+$/.test(targetUserId)) {
       const foundUser = await lookupUserByNameOrUsername(targetUserId);
+      logger.info(`Found user: ${JSON.stringify(foundUser)}`);
       if (!foundUser) {
         return {
           success: false,
@@ -859,8 +865,8 @@ async function handleHelpCommand(chatId) {
 Приклади оновлень через AI:
 - "Змініть виїзд 598 на 11:00"
 - "Встанови заїзд на 15:00"
-- "Постав суму 300 для booking 2025-03-15_598_checkout"
-- "Постав 2 ключі для booking 2025-03-15_598_checkin"`;
+- "Постав суму 300 для квартири 598"
+- "Постав 2 ключі для квартири 598"`;
   await axios.post(`${TELEGRAM_API}/sendMessage`, {
     chat_id: chatId,
     text,
