@@ -6,30 +6,30 @@ import { UserRoles } from "../utils/constants";
 import { logger } from "firebase-functions/v2";
 
 interface TelegramUser {
-  id: string;
+  id: string | number;
   first_name?: string;
   last_name?: string;
   username?: string;
 }
 
-async function isUserRegistered(telegramId: string): Promise<boolean> {
-  const user = await findByTelegramId(telegramId);
+async function isUserRegistered(telegramId: string | number): Promise<boolean> {
+  const telegramIdStr = String(telegramId);
+  const user = await findByTelegramId(telegramIdStr);
   return user !== null;
 }
 
 async function findOrCreateUser(telegramUser: TelegramUser): Promise<User> {
   const { id, first_name, last_name, username } = telegramUser;
+  const idStr = String(id);
 
   logger.log(JSON.stringify(telegramUser));
 
-  // logger.log(typeof id);
-
-  let user = await findByTelegramId(id);
+  let user = await findByTelegramId(idStr);
   if (!user) {
-    console.log(`Creating new user: ${first_name} (ID=${id})`);
+    logger.log(`Creating new user: ${first_name} (ID=${idStr})`);
     const newUser: Omit<IUserData, 'id'> = {
-      telegramId: id,
-      chatId: id,
+      telegramId: idStr,
+      chatId: idStr,
       firstName: first_name || "",
       lastName: last_name || "",
       username: username || "",
@@ -44,10 +44,12 @@ async function findOrCreateUser(telegramUser: TelegramUser): Promise<User> {
   return user;
 }
 
-async function updateUserChatId(telegramId: string, chatId: string): Promise<User | null> {
-  const user = await findByTelegramId(telegramId);
-  if (user && user.chatId !== chatId) {
-    return updateUser(user.id, { chatId, updatedAt: Timestamp.now() });
+async function updateUserChatId(telegramId: string | number, chatId: string | number): Promise<User | null> {
+  const telegramIdStr = String(telegramId);
+  const chatIdStr = String(chatId);
+  const user = await findByTelegramId(telegramIdStr);
+  if (user && user.chatId !== chatIdStr) {
+    return updateUser(user.id, { chatId: chatIdStr, updatedAt: Timestamp.now() });
   }
   return user;
 }
@@ -69,8 +71,9 @@ interface UserWithPermissions {
   isCleaner: boolean;
 }
 
-async function getUserWithPermissions(telegramId: string): Promise<UserWithPermissions | null> {
-  const user = await findByTelegramId(telegramId);
+async function getUserWithPermissions(telegramId: string | number): Promise<UserWithPermissions | null> {
+  const telegramIdStr = String(telegramId);
+  const user = await findByTelegramId(telegramIdStr);
   if (!user) return null;
   
   // Converting User class to UserWithPermissions

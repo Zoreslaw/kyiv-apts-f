@@ -1,5 +1,5 @@
 import { Timestamp } from "firebase-admin/firestore";
-import { findTasksByUserId, updateTask } from "../repositories/taskRepository";
+import { findTasksByUserId, updateTask, findTasksByApartmentId } from "../repositories/taskRepository";
 import { Task, ITaskData } from "../models/Task";
 import { TaskStatuses, TaskTypes } from "../utils/constants";
 import { logger } from "firebase-functions";
@@ -77,23 +77,24 @@ export class TaskService {
     return msg;
   }
 
-  async getTasksForUser(chatId: string): Promise<{ success: boolean; message?: string; tasks?: Task[] }> {
+  async getTasksForUser(chatId: string | number): Promise<{ success: boolean; message?: string; tasks?: Task[] }> {
     try {
-      logger.info(`[TaskService] Starting getTasksForUser for chatId=${chatId}`);
+      const chatIdStr = String(chatId);
+      logger.info(`[TaskService] Starting getTasksForUser for chatId=${chatIdStr}`);
 
-      logger.info(`[TaskService] Found user with id=${chatId}, type=${chatId}`);
-      const tasks = await findTasksByUserId(chatId);
-      logger.info(`[TaskService] Found ${tasks.length} tasks for user ${chatId}`);
+      logger.info(`[TaskService] Found user with id=${chatIdStr}, type=${typeof chatId}`);
+      const tasks = await findTasksByUserId(chatIdStr);
+      logger.info(`[TaskService] Found ${tasks.length} tasks for user ${chatIdStr}`);
 
       if (tasks.length === 0) {
-        logger.info(`[TaskService] No tasks found for user ${chatId}`);
+        logger.info(`[TaskService] No tasks found for user ${chatIdStr}`);
         return {
           success: false,
           message: "На тебе не додано жодних завдань. :("
         };
       }
 
-      logger.info(`[TaskService] Successfully retrieved ${tasks.length} tasks for user ${chatId}`);
+      logger.info(`[TaskService] Successfully retrieved ${tasks.length} tasks for user ${chatIdStr}`);
       return {
         success: true,
         tasks
@@ -105,6 +106,48 @@ export class TaskService {
         error: err instanceof Error ? err.message : 'Unknown error',
         stack: err instanceof Error ? err.stack : undefined
       });
+      return {
+        success: false,
+        message: "Помилка при отриманні завдань. Спробуйте пізніше."
+      };
+    }
+  }
+
+  async getTasksByApartmentId(apartmentId: string): Promise<{ success: boolean; message?: string; tasks?: Task[] }> {
+    try {
+      const tasks = await findTasksByApartmentId(apartmentId);
+      if (tasks.length === 0) {
+        return {
+          success: false,
+          message: `Завдань для квартири ${apartmentId} не знайдено.`
+        };
+      }
+
+      // Filter tasks to only include upcoming ones (within next 7 days)
+      const today = new Date();
+      const nextWeek = new Date();
+      nextWeek.setDate(today.getDate() + 7);
+      
+      const upcomingTasks = tasks.filter(task => {
+        const taskDate = task.dueDate instanceof Date ? task.dueDate : 
+                        task.dueDate instanceof Timestamp ? task.dueDate.toDate() : 
+                        new Date(task.dueDate);
+        return taskDate >= today && taskDate <= nextWeek;
+      });
+
+      if (upcomingTasks.length === 0) {
+        return {
+          success: false,
+          message: `Немає майбутніх завдань для квартири ${apartmentId} на наступний тиждень.`
+        };
+      }
+
+      return {
+        success: true,
+        tasks: upcomingTasks
+      };
+    } catch (err) {
+      logger.error("[TaskService] Error in getTasksByApartmentId:", err);
       return {
         success: false,
         message: "Помилка при отриманні завдань. Спробуйте пізніше."

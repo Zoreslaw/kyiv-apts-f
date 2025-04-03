@@ -8,12 +8,13 @@ const USERS_COLLECTION = "users";
 
 type UserUpdateData = Partial<Omit<IUserData, 'id'>>;
 
-async function findByTelegramId(telegramId: string): Promise<User | null> {
+async function findByTelegramId(telegramId: string | number): Promise<User | null> {
   try {
+    const telegramIdStr = String(telegramId);
     // Try by userId first
     let snap = await db
       .collection("users")
-      .where("userId", "==", telegramId)
+      .where("userId", "==", telegramIdStr)
       .limit(1)
       .get();
     
@@ -24,7 +25,7 @@ async function findByTelegramId(telegramId: string): Promise<User | null> {
     // Try by chatId
     snap = await db
       .collection("users")
-      .where("chatId", "==", telegramId)
+      .where("chatId", "==", telegramIdStr)
       .limit(1)
       .get();
     
@@ -34,7 +35,7 @@ async function findByTelegramId(telegramId: string): Promise<User | null> {
 
     return null;
   } catch (error) {
-    console.error("Error in findByTelegramId:", error);
+    logger.error("Error in findByTelegramId:", error);
     return null;
   }
 }
@@ -111,7 +112,7 @@ export async function lookupUserByNameOrUsername(query: string): Promise<User | 
 
     return null;
   } catch (error) {
-    console.error("Error in lookupUserByNameOrUsername:", error);
+    logger.error("Error in lookupUserByNameOrUsername:", error);
     return null;
   }
 }

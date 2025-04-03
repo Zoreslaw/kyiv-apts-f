@@ -23,9 +23,9 @@ export const telegramWebhook = onRequest(async (req, res) => {
       return;
     }
 
-    const chatId = update.message.chat.id;
+    const chatId = String(update.message.chat.id);
     const text = update.message.text;
-    const userId = update.message.from.id;
+    const userId = String(update.message.from.id);
 
     // Handle /start command
     if (text === "/start") {

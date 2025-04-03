@@ -1,6 +1,9 @@
 import { OpenAI } from "openai";
 import { defineString } from "firebase-functions/params";
 import { logger } from 'firebase-functions';
+import { db } from '../config/firebase';
+import { TaskTypes, TaskStatuses } from '../utils/constants';
+import { getKievDate } from '../utils/dateTime';
 
 // Params
 const openaiApiKey = defineString("OPENAI_API_KEY");
@@ -18,22 +21,22 @@ interface UserRequestResponse {
 
 async function interpretUserRequest(text: string, context: any[] = []): Promise<UserRequestResponse> {
   // Placeholder - adapt OpenAI call from old index.js
-  console.log("Interpreting user request (AI):", text);
+  logger.log("Interpreting user request (AI):", text);
   // const completion = await openai.chat.completions.create({ ... });
   // return completion.choices[0].message;
   return { content: "AI processing not fully implemented yet." };
 }
 
 // Types
-export interface BookingTimeUpdate {
-  bookingId: string;
+export interface TaskTimeUpdate {
+  taskId: string;
   newTime: string;
   changeType: 'checkin' | 'checkout';
   userId: string;
 }
 
-export interface BookingInfoUpdate {
-  bookingId: string;
+export interface TaskInfoUpdate {
+  taskId: string;
   newSumToCollect?: number | null;
   newKeysCount?: number | null;
   userId: string;
@@ -56,23 +59,31 @@ export interface FunctionResult {
   message: string;
 }
 
+export interface AIContext {
+  userId: string;
+  chatId: string;
+  isAdmin: boolean;
+  assignedApartments: string[];
+  currentTasks: any[];
+}
+
 // Function schemas for OpenAI
 export const functionSchemas = [
   {
     type: 'function' as const,
     function: {
-      name: 'update_booking_time',
-      description: 'Updates checkin or checkout time for a given booking.',
+      name: 'update_task_time',
+      description: 'Updates checkin or checkout time for a given task.',
       parameters: {
         type: 'object',
         properties: {
-          bookingId: {
+          taskId: {
             type: 'string',
-            description: 'Unique Firestore doc ID, e.g. "2025-03-15_598_checkout"',
+            description: 'Unique Firestore doc ID, e.g. "2025-03-15_562_checkin"',
           },
           newTime: {
             type: 'string',
-            description: 'New time in "HH:00" format (checkout <14:00, checkin >14:00).',
+            description: 'New time in "HH:00" format.',
           },
           changeType: {
             type: 'string',
@@ -84,7 +95,7 @@ export const functionSchemas = [
             description: 'Telegram user ID for logging',
           },
         },
-        required: ['bookingId', 'newTime', 'changeType', 'userId'],
+        required: ['taskId', 'newTime', 'changeType', 'userId'],
         additionalProperties: false,
       },
     },
@@ -92,14 +103,14 @@ export const functionSchemas = [
   {
     type: 'function' as const,
     function: {
-      name: 'update_booking_info',
-      description: 'Updates sumToCollect and/or keysCount for a booking.',
+      name: 'update_task_info',
+      description: 'Updates sumToCollect and/or keysCount for a task.',
       parameters: {
         type: 'object',
         properties: {
-          bookingId: {
+          taskId: {
             type: 'string',
-            description: 'Unique Firestore doc ID of the booking',
+            description: 'Unique Firestore doc ID of the task',
           },
           newSumToCollect: {
             type: ['number', 'null'],
@@ -114,7 +125,7 @@ export const functionSchemas = [
             description: 'Telegram user ID for logging',
           },
         },
-        required: ['bookingId', 'userId'],
+        required: ['taskId', 'userId'],
         additionalProperties: false,
       },
     },
@@ -179,7 +190,7 @@ export const functionSchemas = [
 
 // System prompt
 export const systemPrompt = `
-You are a Telegram assistant for managing apartment bookings.
+You are a Telegram assistant for managing apartment tasks.
 
 User references:
 1. If user says "@username" or "username" or a partial name, you can search the Firestore "users" collection to find the user with "username" or "firstName" or "lastName" matching it.
@@ -187,18 +198,17 @@ User references:
 
 User Permissions:
 1. Admin users can:
-   - See and modify all bookings
+   - See and modify all tasks
    - Add/remove apartment assignments for users
    - See assigned apartments for other users
 2. Regular users can only see and modify their assigned apartments
 
 Available Functions:
-1) "update_booking_time": Updates checkin or checkout time
-   - Checkout times must be before 14:00
-   - Checkin times must be after 14:00
+1) "update_task_time": Updates checkin or checkout time
    - Format: HH:00 (e.g., "11:00", "15:00")
+   - Any time can be set for checkin or checkout
 
-2) "update_booking_info": Updates sumToCollect and/or keysCount
+2) "update_task_info": Updates sumToCollect and/or keysCount
    - sumToCollect: Amount to collect from guest (in UAH)
    - keysCount: Number of keys to collect/return
 
@@ -213,26 +223,24 @@ Available Functions:
    - The bot will automatically find their Telegram ID
 
 Examples:
-1. "Змініть виїзд 598 на 11:00" -> Use apartment ID "598"
+1. "Змініть виїзд 562 на 12:00" -> Use task ID "562"
 2. "Встанови заїзд на 15:00 для Гусак" -> Use guest name "Гусак"
-3. "Постав суму 300 для booking 2025-03-15_598_checkout" -> Use full booking ID
+3. "Постав суму 300 для task 2025-03-15_562_checkin" -> Use full task ID
 4. "Постав 2 ключі для Baseina" -> Use address "Baseina"
-5. "Додай квартири 598, 321 для @username" -> Add apartments for user
+5. "Додай квартири 562, 321 для @username" -> Add apartments for user
 6. "Видали квартиру 432 у @username" -> Remove apartment from user
 7. "Показати квартири для @username" -> Show apartments for user
 8. "Показати квартири для 1234567890" -> Show apartments for user with ID 1234567890
 
 Always respond in Ukrainian.
 If the user's request is unclear or missing information, ask for clarification.
-If the user doesn't have permission to modify a booking or manage assignments, inform them.
+If the user doesn't have permission to modify a task or manage assignments, inform them.
 `;
 
 export class AIService {
-  private openai: OpenAI;
   private conversationContexts: Map<string, any[]>;
 
-  constructor(apiKey: string) {
-    this.openai = new OpenAI({ apiKey });
+  constructor() {
     this.conversationContexts = new Map();
   }
 
@@ -258,23 +266,20 @@ export class AIService {
 
   async processMessage(
     text: string,
-    userId: string,
-    chatId: string,
-    isAdmin: boolean,
-    assignedApartments: string[],
-    currentBookings: any[]
-  ): Promise<any> {
+    context: AIContext
+  ): Promise<{ type: 'text' | 'function_call', content?: string, function_call?: { name: string, arguments: string } }> {
     try {
-      const context = this.getConversationContext(chatId);
+      const { userId, chatId, isAdmin, assignedApartments, currentTasks } = context;
+      const conversationContext = this.getConversationContext(chatId);
 
-      const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4o',
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4',
         messages: [
           {
             role: 'system',
             content: systemPrompt,
           },
-          ...context.map((msg) => {
+          ...conversationContext.map((msg) => {
             if (msg.role === 'function') {
               return {
                 role: 'function',
@@ -285,7 +290,7 @@ export class AIService {
             return {
               role: msg.role,
               content: msg.content,
-              ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+              ...(msg.function_call && { function_call: msg.function_call }),
             };
           }),
           {
@@ -298,16 +303,16 @@ export class AIService {
               - User ID: ${userId}
               - Is admin: ${isAdmin}
               - Assigned apartments: ${isAdmin ? 'ALL' : assignedApartments.join(', ')}
-              - Available bookings: ${JSON.stringify(currentBookings, null, 2)}`,
+              - Available tasks: ${JSON.stringify(currentTasks, null, 2)}`,
           },
         ],
-        tools: functionSchemas,
-        tool_choice: 'auto',
+        functions: functionSchemas.map((schema) => schema.function),
+        function_call: 'auto',
       });
 
       const message = completion.choices[0].message;
       if (!message) {
-        return null;
+        return { type: 'text', content: 'Помилка при обробці запиту.' };
       }
 
       this.updateConversationContext(chatId, {
@@ -315,18 +320,16 @@ export class AIService {
         content: text,
       });
 
-      if (message.tool_calls) {
-        const toolCall = message.tool_calls[0];
+      if (message.function_call) {
         this.updateConversationContext(chatId, {
           role: 'assistant',
           content: null,
-          tool_calls: message.tool_calls,
+          function_call: message.function_call,
         });
 
         return {
           type: 'function_call',
-          name: toolCall.function.name,
-          arguments: toolCall.function.arguments,
+          function_call: message.function_call,
         };
       }
 
@@ -341,7 +344,7 @@ export class AIService {
       };
     } catch (error) {
       logger.error('Error in processMessage:', error);
-      throw error;
+      return { type: 'text', content: 'Помилка при обробці запиту. Спробуйте пізніше.' };
     }
   }
 
@@ -350,12 +353,12 @@ export class AIService {
     functionName: string,
     functionArgs: any,
     functionResult: FunctionResult
-  ): Promise<any> {
+  ): Promise<{ type: 'text', content: string }> {
     try {
       const context = this.getConversationContext(chatId);
 
-      const followUp = await this.openai.chat.completions.create({
-        model: 'gpt-4o',
+      const followUp = await openai.chat.completions.create({
+        model: 'gpt-4',
         messages: [
           { role: 'system', content: systemPrompt },
           ...context.map((msg) => {
@@ -369,7 +372,7 @@ export class AIService {
             return {
               role: msg.role,
               content: msg.content,
-              ...(msg.tool_calls && { tool_calls: msg.tool_calls }),
+              ...(msg.function_call && { function_call: msg.function_call }),
             };
           }),
           {
@@ -378,16 +381,16 @@ export class AIService {
             content: JSON.stringify(functionResult),
           },
         ],
-        tools: functionSchemas,
-        tool_choice: 'auto',
+        functions: functionSchemas.map((schema) => schema.function),
+        function_call: 'auto',
       });
 
       const message = followUp.choices[0].message;
       if (!message) {
-        return null;
+        return { type: 'text', content: functionResult.message };
       }
 
-      if (message.tool_calls) {
+      if (message.function_call) {
         logger.info('Model tried another function call after update.');
         return {
           type: 'text',
@@ -401,7 +404,7 @@ export class AIService {
       };
     } catch (error) {
       logger.error('Error in processFunctionResult:', error);
-      throw error;
+      return { type: 'text', content: functionResult.message };
     }
   }
 }

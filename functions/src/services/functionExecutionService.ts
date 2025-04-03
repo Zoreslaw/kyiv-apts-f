@@ -1,6 +1,6 @@
 import { logger } from "firebase-functions";
 import { Timestamp } from "firebase-admin/firestore";
-import { updateTask } from "../repositories/taskRepository";
+import { updateTask, updateTaskTime } from "../repositories/taskRepository";
 import { findByTelegramId as findUserById } from "../repositories/userRepository";
 import { findByUserId as findAssignmentByUserId, createAssignment, updateAssignment } from "../repositories/cleaningAssignmentRepository";
 import { TaskService } from "./taskService";
@@ -8,17 +8,17 @@ import { TaskService } from "./taskService";
 export class FunctionExecutionService {
   private taskService: TaskService;
 
-  constructor() {
-    this.taskService = new TaskService();
+  constructor(taskService: TaskService) {
+    this.taskService = taskService;
   }
 
   async executeFunction(name: string, args: any): Promise<any> {
     try {
       switch (name) {
-        case "update_booking_time":
-          return await this.handleUpdateBookingTime(args);
-        case "update_booking_info":
-          return await this.handleUpdateBookingInfo(args);
+        case "update_task_time":
+          return await this.handleUpdateTaskTime(args);
+        case "update_task_info":
+          return await this.handleUpdateTaskInfo(args);
         case "manage_apartment_assignments":
           return await this.handleManageApartmentAssignments(args);
         case "show_user_apartments":
@@ -39,13 +39,13 @@ export class FunctionExecutionService {
     }
   }
 
-  private async handleUpdateBookingTime(args: {
-    bookingId: string;
+  private async handleUpdateTaskTime(args: {
+    taskId: string;
     newTime: string;
     changeType: "checkin" | "checkout";
     userId: string;
   }): Promise<any> {
-    const { bookingId, newTime, changeType, userId } = args;
+    const { taskId, newTime, changeType, userId } = args;
 
     // Validate time format (HH:00)
     if (!/^([0-9]|0[0-9]|1[0-9]|2[0-3]):00$/.test(newTime)) {
@@ -55,45 +55,17 @@ export class FunctionExecutionService {
       };
     }
 
-    // Validate time constraints
-    const hour = parseInt(newTime.split(":")[0], 10);
-    if (changeType === "checkout" && hour >= 14) {
-      return {
-        success: false,
-        message: `Час виїзду має бути раніше 14:00. Ви вказали: ${newTime}`,
-      };
-    }
-
-    if (changeType === "checkin" && hour < 14) {
-      return {
-        success: false,
-        message: `Час заїзду має бути не раніше 14:00. Ви вказали: ${newTime}`,
-      };
-    }
-
     // Update the task
-    const updateField = changeType === "checkin" ? "checkinTime" : "checkoutTime";
-    await updateTask(bookingId, {
-      [updateField]: newTime,
-      updatedAt: Timestamp.now(),
-      updatedBy: userId,
-    });
-
-    return {
-      success: true,
-      message: changeType === "checkin"
-        ? `Час заїзду оновлено на ${newTime}.`
-        : `Час виїзду оновлено на ${newTime}.`,
-    };
+    return await updateTaskTime(taskId, newTime, changeType, userId);
   }
 
-  private async handleUpdateBookingInfo(args: {
-    bookingId: string;
+  private async handleUpdateTaskInfo(args: {
+    taskId: string;
     newSumToCollect?: number | null;
     newKeysCount?: number | null;
     userId: string;
   }): Promise<any> {
-    const { bookingId, newSumToCollect, newKeysCount, userId } = args;
+    const { taskId, newSumToCollect, newKeysCount, userId } = args;
 
     const updateObj: any = {
       updatedAt: Timestamp.now(),
@@ -115,7 +87,7 @@ export class FunctionExecutionService {
       };
     }
 
-    await updateTask(bookingId, updateObj);
+    await updateTask(taskId, updateObj);
 
     let message = "Оновлено: ";
     if (newSumToCollect !== null && newSumToCollect !== undefined) {
