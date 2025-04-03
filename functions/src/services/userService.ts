@@ -3,27 +3,33 @@ import { Timestamp } from "firebase-admin/firestore";
 import { findByTelegramId, createUser, updateUser } from "../repositories/userRepository";
 import { User, IUserData } from "../models/User";
 import { UserRoles } from "../utils/constants";
+import { logger } from "firebase-functions/v2";
 
 interface TelegramUser {
-  id: number;
+  id: string;
   first_name?: string;
   last_name?: string;
   username?: string;
 }
 
-async function isUserRegistered(telegramId: number | string): Promise<boolean> {
+async function isUserRegistered(telegramId: string): Promise<boolean> {
   const user = await findByTelegramId(telegramId);
   return user !== null;
 }
 
 async function findOrCreateUser(telegramUser: TelegramUser): Promise<User> {
   const { id, first_name, last_name, username } = telegramUser;
+
+  logger.log(JSON.stringify(telegramUser));
+
+  // logger.log(typeof id);
+
   let user = await findByTelegramId(id);
   if (!user) {
     console.log(`Creating new user: ${first_name} (ID=${id})`);
     const newUser: Omit<IUserData, 'id'> = {
-      telegramId: String(id),
-      chatId: null,
+      telegramId: id,
+      chatId: id,
       firstName: first_name || "",
       lastName: last_name || "",
       username: username || "",
@@ -38,7 +44,7 @@ async function findOrCreateUser(telegramUser: TelegramUser): Promise<User> {
   return user;
 }
 
-async function updateUserChatId(telegramId: number | string, chatId: number): Promise<User | null> {
+async function updateUserChatId(telegramId: string, chatId: string): Promise<User | null> {
   const user = await findByTelegramId(telegramId);
   if (user && user.chatId !== chatId) {
     return updateUser(user.id, { chatId, updatedAt: Timestamp.now() });
@@ -49,7 +55,7 @@ async function updateUserChatId(telegramId: number | string, chatId: number): Pr
 interface UserWithPermissions {
   id: string;
   telegramId: string;
-  chatId: number | null;
+  chatId: string | null;
   firstName: string;
   lastName: string | null;
   username: string | null;
@@ -63,7 +69,7 @@ interface UserWithPermissions {
   isCleaner: boolean;
 }
 
-async function getUserWithPermissions(telegramId: number | string): Promise<UserWithPermissions | null> {
+async function getUserWithPermissions(telegramId: string): Promise<UserWithPermissions | null> {
   const user = await findByTelegramId(telegramId);
   if (!user) return null;
   

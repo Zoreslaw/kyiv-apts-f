@@ -4,7 +4,7 @@ import { UserRoles } from '../utils/constants';
 export interface IUserData {
     id: string;
     telegramId: string;
-    chatId?: number | null;
+    chatId?: string | null;
     firstName: string;
     lastName?: string | null;
     username?: string | null;
@@ -18,7 +18,7 @@ export interface IUserData {
 export class User implements IUserData {
     id: string;
     telegramId: string;
-    chatId: number | null;
+    chatId: string | null;
     firstName: string;
     lastName: string | null;
     username: string | null;

@@ -8,7 +8,7 @@ import { FunctionExecutionService } from "./functionExecutionService";
 
 // Types
 interface TelegramMessage {
-  chat: { id: number };
+  chat: { id: string };
   from: { id: number; first_name?: string; last_name?: string; username?: string };
   text?: string;
 }
@@ -29,7 +29,7 @@ export class TelegramService {
   private aiService: AIService;
   private taskService: TaskService;
   private functionService: FunctionExecutionService;
-  private conversationContexts: Map<number, any[]>;
+  private conversationContexts: Map<string, any[]>;
 
   constructor(openaiApiKey: string) {
     this.aiService = new AIService(openaiApiKey);
@@ -38,14 +38,14 @@ export class TelegramService {
     this.conversationContexts = new Map();
   }
 
-  private getConversationContext(chatId: number): any[] {
+  private getConversationContext(chatId: string): any[] {
     if (!this.conversationContexts.has(chatId)) {
       this.conversationContexts.set(chatId, []);
     }
     return this.conversationContexts.get(chatId)!;
   }
 
-  private updateConversationContext(chatId: number, message: any): void {
+  private updateConversationContext(chatId: string, message: any): void {
     const context = this.getConversationContext(chatId);
     context.push(message);
     if (context.length > 3) {
@@ -53,11 +53,11 @@ export class TelegramService {
     }
   }
 
-  private clearConversationContext(chatId: number): void {
+  private clearConversationContext(chatId: string): void {
     this.conversationContexts.delete(chatId);
   }
 
-  private async sendMessage(chatId: number, text: string, parseMode?: string, replyMarkup?: any): Promise<void> {
+  private async sendMessage(chatId: string, text: string, parseMode?: string, replyMarkup?: any): Promise<void> {
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: chatId,
       text,
@@ -70,11 +70,14 @@ export class TelegramService {
     const { chat, from } = message;
     const { id: userId, first_name: firstName, last_name: lastName, username } = from;
 
-    logger.info(`New user: ${firstName} (ID=${userId})`);
+    // Convert userId to string
+    const userIdStr = String(userId);
+
+    logger.info(`New user: ${firstName} (ID=${userIdStr})`);
 
     // Check if user exists
     await findOrCreateUser({
-      id: userId,
+      id: userIdStr,
       first_name: firstName,
       last_name: lastName,
       username: username
@@ -89,25 +92,38 @@ export class TelegramService {
     );
   }
 
-  async handleGetMyTasks(chatId: number): Promise<void> {
+  async handleGetMyTasks(chatId: string): Promise<void> {
     try {
+      logger.info(`[TelegramService] Starting handleGetMyTasks for chatId=${chatId}`);
+      
       const result = await this.taskService.getTasksForUser(chatId);
+      logger.info(`[TelegramService] TaskService result:`, {
+        success: result.success,
+        hasMessage: !!result.message,
+        tasksCount: result.tasks?.length || 0
+      });
       
       if (!result.success) {
+        logger.warn(`[TelegramService] TaskService returned error: ${result.message}`);
         await this.sendMessage(chatId, result.message || "Помилка при отриманні завдань.");
         return;
       }
 
       if (!result.tasks) {
+        logger.info(`[TelegramService] No tasks returned for chatId=${chatId}`);
         await this.sendMessage(chatId, "Немає завдань на найближчі дні.");
         return;
       }
 
       // Group tasks by date
       const grouped = this.taskService.groupTasksByDate(result.tasks);
+      logger.info(`[TelegramService] Grouped tasks into ${Object.keys(grouped).length} dates`);
+      
       const allDates = Object.keys(grouped).sort();
+      logger.info(`[TelegramService] Sorted dates: ${allDates.join(', ')}`);
 
       if (allDates.length === 0) {
+        logger.info(`[TelegramService] No dates with tasks found for chatId=${chatId}`);
         await this.sendMessage(chatId, "Немає завдань на найближчі дні.");
         return;
       }
@@ -115,24 +131,37 @@ export class TelegramService {
       // Send tasks for each date
       for (const date of allDates) {
         const { checkouts, checkins } = grouped[date];
-        if (!checkouts.length && !checkins.length) continue;
+        logger.info(`[TelegramService] Processing date ${date}: ${checkouts.length} checkouts, ${checkins.length} checkins`);
+        
+        if (!checkouts.length && !checkins.length) {
+          logger.info(`[TelegramService] Skipping empty date ${date}`);
+          continue;
+        }
 
         const [y, m, d] = date.split("-");
         const dateString = `${d}.${m}.${y}`;
         let msg = this.taskService.formatTasksMessage(dateString, checkouts, checkins);
+        logger.info(`[TelegramService] Sending message for date ${dateString}`);
         await this.sendMessage(chatId, msg, "Markdown");
       }
+      
+      logger.info(`[TelegramService] Successfully completed handleGetMyTasks for chatId=${chatId}`);
     } catch (err) {
-      logger.error("Error in handleGetMyTasks:", err);
+      logger.error("[TelegramService] Error in handleGetMyTasks:", err);
+      logger.error("[TelegramService] Error details:", {
+        chatId,
+        error: err instanceof Error ? err.message : 'Unknown error',
+        stack: err instanceof Error ? err.stack : undefined
+      });
       await this.sendMessage(chatId, "Помилка при отриманні завдань. Спробуйте пізніше.");
     }
   }
 
-  async handleMenuCommand(chatId: number): Promise<void> {
+  async handleMenuCommand(chatId: string): Promise<void> {
     await this.sendMessage(chatId, "Оберіть опцію з меню:", undefined, mainMenuKeyboard);
   }
 
-  async handleHelpCommand(chatId: number): Promise<void> {
+  async handleHelpCommand(chatId: string): Promise<void> {
     const text = `🤖 *Доступні команди:*
 
       📋 *Мої завдання* - переглянути список завдань (старий метод, без AI)
@@ -145,10 +174,10 @@ export class TelegramService {
       - "Встанови заїзд на 15:00"
       - "Постав суму 300 для квартири 598"
       - "Постав 2 ключі для квартири 598"`;
-          await this.sendMessage(chatId, text, "Markdown");
-        }
+    await this.sendMessage(chatId, text, "Markdown");
+  }
 
-  async handleAboutCommand(chatId: number): Promise<void> {
+  async handleAboutCommand(chatId: string): Promise<void> {
     const text = `🤖 *Бот для управління завданнями*
 
       Цей бот показує завдання старим способом і оновлює час/суму/ключі через AI.
@@ -163,7 +192,8 @@ export class TelegramService {
     const { chat, from, text } = message;
     if (!text) return;
 
-    const userId = from.id;
+    // Convert userId to string
+    const userId = String(from.id);
 
     // Handle basic commands
     switch (text) {
@@ -190,7 +220,7 @@ export class TelegramService {
 
     // Load user data
     const user = await findOrCreateUser({
-      id: chat.id,
+      id: userId,
       first_name: from.first_name,
       last_name: from.last_name,
       username: from.username
@@ -233,16 +263,19 @@ export class TelegramService {
   }
 
   async handleStartCommand(
-    chatId: number,
+    chatId: string,
     userId: number,
     firstName: string,
     lastName: string,
     username: string
   ): Promise<void> {
     try {
+      // Convert userId to string
+      const userIdStr = String(userId);
+
       // Create or update user
       await findOrCreateUser({
-        id: userId,
+        id: userIdStr,
         first_name: firstName,
         last_name: lastName,
         username: username

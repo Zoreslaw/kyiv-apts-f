@@ -229,21 +229,21 @@ If the user doesn't have permission to modify a booking or manage assignments, i
 
 export class AIService {
   private openai: OpenAI;
-  private conversationContexts: Map<number, any[]>;
+  private conversationContexts: Map<string, any[]>;
 
   constructor(apiKey: string) {
     this.openai = new OpenAI({ apiKey });
     this.conversationContexts = new Map();
   }
 
-  getConversationContext(chatId: number): any[] {
+  getConversationContext(chatId: string): any[] {
     if (!this.conversationContexts.has(chatId)) {
       this.conversationContexts.set(chatId, []);
     }
     return this.conversationContexts.get(chatId)!;
   }
 
-  updateConversationContext(chatId: number, message: any): void {
+  updateConversationContext(chatId: string, message: any): void {
     const context = this.getConversationContext(chatId);
     context.push(message);
     // Keep only last 3 messages
@@ -252,14 +252,14 @@ export class AIService {
     }
   }
 
-  clearConversationContext(chatId: number): void {
+  clearConversationContext(chatId: string): void {
     this.conversationContexts.delete(chatId);
   }
 
   async processMessage(
     text: string,
-    userId: number,
-    chatId: number,
+    userId: string,
+    chatId: string,
     isAdmin: boolean,
     assignedApartments: string[],
     currentBookings: any[]
@@ -346,7 +346,7 @@ export class AIService {
   }
 
   async processFunctionResult(
-    chatId: number,
+    chatId: string,
     functionName: string,
     functionArgs: any,
     functionResult: FunctionResult

@@ -2,19 +2,18 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { User, IUserData } from '../models/User';
 import { db } from '../config/firebase';
+import { logger } from 'firebase-functions';
 
 const USERS_COLLECTION = "users";
 
 type UserUpdateData = Partial<Omit<IUserData, 'id'>>;
 
-async function findByTelegramId(telegramId: string | number): Promise<User | null> {
+async function findByTelegramId(telegramId: string): Promise<User | null> {
   try {
-    const normalizedId = String(telegramId);
-    
     // Try by userId first
     let snap = await db
       .collection("users")
-      .where("userId", "==", parseInt(normalizedId))
+      .where("userId", "==", telegramId)
       .limit(1)
       .get();
     
@@ -25,7 +24,7 @@ async function findByTelegramId(telegramId: string | number): Promise<User | nul
     // Try by chatId
     snap = await db
       .collection("users")
-      .where("chatId", "==", parseInt(normalizedId))
+      .where("chatId", "==", telegramId)
       .limit(1)
       .get();
     
@@ -48,7 +47,7 @@ async function createUser(userData: Omit<IUserData, 'id'>): Promise<User> {
     updatedAt: now
   };
   
-  const docRef = db.collection(USERS_COLLECTION).doc(String(userData.telegramId));
+  const docRef = db.collection(USERS_COLLECTION).doc(userData.telegramId);
   await docRef.set(userWithTimestamps);
   const snapshot = await docRef.get();
   return new User({ id: snapshot.id, ...snapshot.data() } as IUserData);

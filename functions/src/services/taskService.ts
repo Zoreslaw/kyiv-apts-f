@@ -77,34 +77,34 @@ export class TaskService {
     return msg;
   }
 
-  async getTasksForUser(chatId: number): Promise<{ success: boolean; message?: string; tasks?: Task[] }> {
+  async getTasksForUser(chatId: string): Promise<{ success: boolean; message?: string; tasks?: Task[] }> {
     try {
-      logger.info(`Loading tasks for user with chatId=${chatId}`);
+      logger.info(`[TaskService] Starting getTasksForUser for chatId=${chatId}`);
 
-      const user = await findOrCreateUser({
-        id: chatId,
-      });
-      if (!user) {
-        return {
-          success: false,
-          message: "Ти не зареєстрований у системі. Будь ласка, скористайся командою /start."
-        };
-      }
+      logger.info(`[TaskService] Found user with id=${chatId}, type=${chatId}`);
+      const tasks = await findTasksByUserId(chatId);
+      logger.info(`[TaskService] Found ${tasks.length} tasks for user ${chatId}`);
 
-      const tasks = await findTasksByUserId(user.id);
       if (tasks.length === 0) {
+        logger.info(`[TaskService] No tasks found for user ${chatId}`);
         return {
           success: false,
           message: "На тебе не додано жодних завдань. :("
         };
       }
 
+      logger.info(`[TaskService] Successfully retrieved ${tasks.length} tasks for user ${chatId}`);
       return {
         success: true,
         tasks
       };
     } catch (err) {
-      logger.error("Error in getTasksForUser:", err);
+      logger.error("[TaskService] Error in getTasksForUser:", err);
+      logger.error("[TaskService] Error details:", {
+        chatId,
+        error: err instanceof Error ? err.message : 'Unknown error',
+        stack: err instanceof Error ? err.stack : undefined
+      });
       return {
         success: false,
         message: "Помилка при отриманні завдань. Спробуйте пізніше."
