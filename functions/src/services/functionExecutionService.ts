@@ -1,211 +1,281 @@
 import { logger } from "firebase-functions";
 import { Timestamp } from "firebase-admin/firestore";
-import { updateTask, updateTaskTime } from "../repositories/taskRepository";
+import { updateTask } from "../repositories/taskRepository";
 import { findByTelegramId as findUserById } from "../repositories/userRepository";
 import { findByUserId as findAssignmentByUserId, createAssignment, updateAssignment } from "../repositories/cleaningAssignmentRepository";
 import { TaskService } from "./taskService";
+import { TaskTimeUpdate, TaskInfoUpdate, ApartmentAssignment, UserApartmentsQuery } from './aiService';
 
 export class FunctionExecutionService {
   private taskService: TaskService;
 
-  constructor(taskService: TaskService) {
-    this.taskService = taskService;
+  constructor() {
+    this.taskService = new TaskService();
   }
 
-  async executeFunction(name: string, args: any): Promise<any> {
+  async executeFunction(functionName: string, args: any): Promise<{ success: boolean; message: string }> {
     try {
-      switch (name) {
-        case "update_task_time":
-          return await this.handleUpdateTaskTime(args);
-        case "update_task_info":
-          return await this.handleUpdateTaskInfo(args);
-        case "manage_apartment_assignments":
-          return await this.handleManageApartmentAssignments(args);
-        case "show_user_apartments":
-          return await this.handleShowUserApartments(args);
-        default:
-          logger.warn(`Unknown function call: ${name}`);
+      logger.info('[Function] Executing function:', {
+        functionName,
+        args
+      });
+
+      switch (functionName) {
+        case 'update_task_time': {
+          const { taskId, newTime, changeType, userId } = args as TaskTimeUpdate;
+          logger.info('[Function] Updating task time:', {
+            taskId,
+            newTime,
+            changeType,
+            userId
+          });
+          return await this.handleUpdateTaskTime(taskId, newTime, changeType, userId);
+        }
+        case 'update_task_info': {
+          const { taskId, newSumToCollect, newKeysCount, userId } = args as TaskInfoUpdate;
+          logger.info('[Function] Updating task info:', {
+            taskId,
+            newSumToCollect,
+            newKeysCount,
+            userId
+          });
+          return await this.handleUpdateTaskInfo(taskId, newSumToCollect, newKeysCount, userId);
+        }
+        case 'assign_apartments': {
+          const { targetUserId, action, apartmentIds, isAdmin } = args as ApartmentAssignment;
+          logger.info('[Function] Assigning apartments:', {
+            targetUserId,
+            action,
+            apartmentIds,
+            isAdmin
+          });
+          return await this.handleManageApartmentAssignments(targetUserId, action, apartmentIds, isAdmin);
+        }
+        case 'get_user_apartments': {
+          const { targetUserId, isAdmin } = args as UserApartmentsQuery;
+          logger.info('[Function] Getting user apartments:', {
+            targetUserId,
+            isAdmin
+          });
+          return await this.handleShowUserApartments(targetUserId, isAdmin);
+        }
+        default: {
+          logger.warn('[Function] Unknown function call:', {
+            functionName,
+            args
+          });
           return {
             success: false,
-            message: "Невідома команда, спробуйте ще раз.",
+            message: `Невідома функція: ${functionName}`
           };
+        }
       }
     } catch (error) {
-      logger.error(`Error executing function ${name}:`, error);
+      logger.error('[Function] Error executing function:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        functionName,
+        args
+      });
       return {
         success: false,
-        message: "Сталася помилка при виконанні команди. Спробуйте пізніше.",
+        message: 'Помилка при виконанні функції. Спробуйте пізніше.'
       };
     }
   }
 
-  private async handleUpdateTaskTime(args: {
-    taskId: string;
-    newTime: string;
-    changeType: "checkin" | "checkout";
-    userId: string;
-  }): Promise<any> {
-    const { taskId, newTime, changeType, userId } = args;
-
-    // Validate time format (HH:00)
-    if (!/^([0-9]|0[0-9]|1[0-9]|2[0-3]):00$/.test(newTime)) {
-      return {
-        success: false,
-        message: `Недійсний формат часу: ${newTime}. Використовуйте формат "ГГ:00".`,
-      };
-    }
-
-    // Update the task
-    return await updateTaskTime(taskId, newTime, changeType, userId);
-  }
-
-  private async handleUpdateTaskInfo(args: {
-    taskId: string;
-    newSumToCollect?: number | null;
-    newKeysCount?: number | null;
-    userId: string;
-  }): Promise<any> {
-    const { taskId, newSumToCollect, newKeysCount, userId } = args;
-
-    const updateObj: any = {
-      updatedAt: Timestamp.now(),
-      updatedBy: userId,
-    };
-
-    if (newSumToCollect !== null && newSumToCollect !== undefined) {
-      updateObj.sumToCollect = Number(newSumToCollect);
-    }
-
-    if (newKeysCount !== null && newKeysCount !== undefined) {
-      updateObj.keysCount = Number(newKeysCount);
-    }
-
-    if (Object.keys(updateObj).length <= 2) {
-      return {
-        success: false,
-        message: "Не вказано ні суму, ні кількість ключів для оновлення.",
-      };
-    }
-
-    await updateTask(taskId, updateObj);
-
-    let message = "Оновлено: ";
-    if (newSumToCollect !== null && newSumToCollect !== undefined) {
-      message += `сума до оплати - ${newSumToCollect} грн`;
-      if (newKeysCount !== null && newKeysCount !== undefined) {
-        message += ", ";
+  private async handleUpdateTaskTime(
+    taskId: string,
+    newTime: string,
+    changeType: 'checkin' | 'checkout',
+    userId: string
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      // Validate time format (HH:00)
+      if (!/^([0-9]|0[0-9]|1[0-9]|2[0-3]):00$/.test(newTime)) {
+        return {
+          success: false,
+          message: `Недійсний формат часу: ${newTime}. Використовуйте формат "ГГ:00".`
+        };
       }
-    }
 
-    if (newKeysCount !== null && newKeysCount !== undefined) {
-      message += `кількість ключів - ${newKeysCount}`;
-    }
-
-    return {
-      success: true,
-      message,
-    };
-  }
-
-  private async handleManageApartmentAssignments(args: {
-    targetUserId: string;
-    action: "add" | "remove";
-    apartmentIds: string[];
-    isAdmin: boolean;
-  }): Promise<any> {
-    const { targetUserId, action, apartmentIds, isAdmin } = args;
-
-    if (!isAdmin) {
-      return {
-        success: false,
-        message: "Тільки адміністратори можуть керувати призначеннями квартир.",
-      };
-    }
-
-    // Find user by ID or name
-    let user = await findUserById(targetUserId);
-    if (!user) {
-      return {
-        success: false,
-        message: `Не знайшов користувача за запитом '${targetUserId}'.`,
-      };
-    }
-
-    // Get current assignments
-    let assignment = await findAssignmentByUserId(user.id);
-    let currentApartments: string[] = [];
-
-    if (assignment) {
-      currentApartments = assignment.apartmentIds || [];
-    }
-
-    // Update assignments
-    let updatedApartments: string[];
-    if (action === "add") {
-      updatedApartments = [...new Set([...currentApartments, ...apartmentIds])];
-    } else {
-      updatedApartments = currentApartments.filter(
-        (id) => !apartmentIds.includes(id)
-      );
-    }
-
-    if (assignment) {
-      await updateAssignment(assignment.id, {
-        apartmentIds: updatedApartments,
+      const updateObj = {
+        [changeType === 'checkin' ? 'checkinTime' : 'checkoutTime']: newTime,
         updatedAt: Timestamp.now(),
-      });
-    } else {
-      await createAssignment({
-        userId: user.id,
-        apartmentIds: updatedApartments,
-        createdAt: Timestamp.now(),
-        updatedAt: Timestamp.now(),
-      });
-    }
-
-    const actionText = action === "add" ? "додано" : "видалено";
-    const displayName = user.username || user.firstName || user.id;
-    return {
-      success: true,
-      message: `Успішно ${actionText} квартири ${apartmentIds.join(", ")} ${
-        action === "add" ? "до" : "у"
-      } користувача ${displayName}.`,
-    };
-  }
-
-  private async handleShowUserApartments(args: {
-    targetUserId: string;
-    isAdmin: boolean;
-  }): Promise<any> {
-    const { targetUserId, isAdmin } = args;
-
-    if (!isAdmin) {
-      return {
-        success: false,
-        message: "Тільки адміністратор може дивитись чужі квартири.",
+        updatedBy: userId
       };
-    }
 
-    // Find user by ID or name
-    const user = await findUserById(targetUserId);
-    if (!user) {
-      return {
-        success: false,
-        message: `Не знайшов користувача за запитом '${targetUserId}'.`,
-      };
-    }
-
-    const assignment = await findAssignmentByUserId(user.id);
-    if (!assignment || !assignment.apartmentIds?.length) {
+      await updateTask(taskId, updateObj);
       return {
         success: true,
-        message: `У користувача ${user.username || user.firstName || user.id} немає призначених квартир.`,
+        message: `Час ${changeType === 'checkin' ? 'заїзду' : 'виїзду'} оновлено на ${newTime}.`
+      };
+    } catch (error) {
+      logger.error('[Function] Error updating task time:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        taskId,
+        newTime,
+        changeType,
+        userId
+      });
+      return {
+        success: false,
+        message: 'Помилка при оновленні часу завдання.'
       };
     }
+  }
 
-    return {
-      success: true,
-      message: `У користувача ${user.username || user.firstName || user.id} призначені квартири: ${assignment.apartmentIds.join(", ")}`,
-    };
+  private async handleUpdateTaskInfo(
+    taskId: string,
+    newSumToCollect: number | null | undefined,
+    newKeysCount: number | null | undefined,
+    userId: string
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const updateObj: any = {
+        updatedAt: Timestamp.now(),
+        updatedBy: userId
+      };
+
+      if (newSumToCollect !== null && newSumToCollect !== undefined) {
+        updateObj.sumToCollect = Number(newSumToCollect);
+      }
+
+      if (newKeysCount !== null && newKeysCount !== undefined) {
+        updateObj.keysCount = Number(newKeysCount);
+      }
+
+      if (Object.keys(updateObj).length <= 2) {
+        return {
+          success: false,
+          message: 'Не вказано ні суму, ні кількість ключів для оновлення.'
+        };
+      }
+
+      await updateTask(taskId, updateObj);
+
+      let message = 'Оновлено: ';
+      if (newSumToCollect !== null && newSumToCollect !== undefined) {
+        message += `сума до оплати - ${newSumToCollect} грн`;
+        if (newKeysCount !== null && newKeysCount !== undefined) {
+          message += ', ';
+        }
+      }
+
+      if (newKeysCount !== null && newKeysCount !== undefined) {
+        message += `кількість ключів - ${newKeysCount}`;
+      }
+
+      return {
+        success: true,
+        message
+      };
+    } catch (error) {
+      logger.error('[Function] Error updating task info:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        taskId,
+        newSumToCollect,
+        newKeysCount,
+        userId
+      });
+      return {
+        success: false,
+        message: 'Помилка при оновленні інформації завдання.'
+      };
+    }
+  }
+
+  private async handleManageApartmentAssignments(
+    targetUserId: string,
+    action: 'add' | 'remove',
+    apartmentIds: string[],
+    isAdmin: boolean
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      if (!isAdmin) {
+        return {
+          success: false,
+          message: 'У вас немає прав для виконання цієї операції.'
+        };
+      }
+
+      const assignment = await findAssignmentByUserId(targetUserId);
+      if (!assignment) {
+        await createAssignment({
+          userId: targetUserId,
+          apartmentIds,
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now()
+        });
+        return {
+          success: true,
+          message: `Квартири ${apartmentIds.join(', ')} успішно призначені користувачу.`
+        };
+      }
+
+      const updatedApartmentIds = action === 'add'
+        ? [...new Set([...assignment.apartmentIds, ...apartmentIds])]
+        : assignment.apartmentIds.filter(id => !apartmentIds.includes(id));
+
+      await updateAssignment(assignment.id, {
+        apartmentIds: updatedApartmentIds,
+        updatedAt: Timestamp.now()
+      });
+      return {
+        success: true,
+        message: `Список квартир користувача успішно оновлено.`
+      };
+    } catch (error) {
+      logger.error('[Function] Error managing apartment assignments:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        targetUserId,
+        action,
+        apartmentIds
+      });
+      return {
+        success: false,
+        message: 'Помилка при оновленні призначених квартир.'
+      };
+    }
+  }
+
+  private async handleShowUserApartments(
+    targetUserId: string,
+    isAdmin: boolean
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const assignment = await findAssignmentByUserId(targetUserId);
+      if (!assignment) {
+        return {
+          success: false,
+          message: 'Користувач не має призначених квартир.'
+        };
+      }
+
+      if (!isAdmin && targetUserId !== assignment.userId) {
+        return {
+          success: false,
+          message: 'У вас немає прав для перегляду квартир цього користувача.'
+        };
+      }
+
+      return {
+        success: true,
+        message: `Призначені квартири: ${assignment.apartmentIds.join(', ')}`
+      };
+    } catch (error) {
+      logger.error('[Function] Error showing user apartments:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        targetUserId
+      });
+      return {
+        success: false,
+        message: 'Помилка при отриманні списку квартир.'
+      };
+    }
   }
 } 

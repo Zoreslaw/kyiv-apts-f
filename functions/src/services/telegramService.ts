@@ -33,35 +33,11 @@ export class TelegramService {
   private aiService: AIService;
   private taskService: TaskService;
   private functionService: FunctionExecutionService;
-  private conversationContexts: Map<string, any[]>;
 
   constructor(openaiApiKey: string) {
     this.aiService = new AIService();
     this.taskService = new TaskService();
-    this.functionService = new FunctionExecutionService(this.taskService);
-    this.conversationContexts = new Map();
-  }
-
-  private getConversationContext(chatId: string | number): any[] {
-    const chatIdStr = String(chatId);
-    if (!this.conversationContexts.has(chatIdStr)) {
-      this.conversationContexts.set(chatIdStr, []);
-    }
-    return this.conversationContexts.get(chatIdStr)!;
-  }
-
-  private updateConversationContext(chatId: string | number, message: any): void {
-    const chatIdStr = String(chatId);
-    const context = this.getConversationContext(chatIdStr);
-    context.push(message);
-    if (context.length > 3) {
-      context.shift();
-    }
-  }
-
-  private clearConversationContext(chatId: string | number): void {
-    const chatIdStr = String(chatId);
-    this.conversationContexts.delete(chatIdStr);
+    this.functionService = new FunctionExecutionService();
   }
 
   private async sendMessage(chatId: string | number, text: string, parseMode?: string, replyMarkup?: any): Promise<void> {
@@ -150,8 +126,8 @@ export class TelegramService {
       if (!result.tasks) {
         logger.info(`[TelegramService] No tasks returned for chatId=${chatIdStr}`);
         await this.sendMessage(chatIdStr, "Немає завдань на найближчі дні.");
-        return;
-      }
+    return;
+  }
 
       // Group tasks by date
       const grouped = this.taskService.groupTasksByDate(result.tasks);
@@ -163,8 +139,8 @@ export class TelegramService {
       if (allDates.length === 0) {
         logger.info(`[TelegramService] No dates with tasks found for chatId=${chatIdStr}`);
         await this.sendMessage(chatIdStr, "Немає завдань на найближчі дні.");
-        return;
-      }
+    return;
+  }
 
       // Send tasks for each date, splitting long messages
       for (const date of allDates) {
@@ -302,6 +278,7 @@ export class TelegramService {
     const isAdmin = user.role === UserRoles.ADMIN;
     const assignment = await findByUserId(String(userId));
     const assignedApartments = assignment?.apartmentIds || [];
+    const currentTasks = (await this.taskService.getTasksForUser(String(userId))).tasks || [];
 
     // Process message with AI
     const result = await this.aiService.processMessage(text, {
@@ -309,36 +286,12 @@ export class TelegramService {
       chatId: String(chatId),
       isAdmin,
       assignedApartments,
-      currentTasks: [] // We'll get this later if needed
+      currentTasks
     });
 
     if (result.type === 'text') {
       await this.sendMessage(String(chatId), result.content || "Операція успішно виконана.");
     } else if (result.type === 'function_call' && result.function_call) {
-      // If the function call is for updating a task, try to find the task by apartment ID
-      if (result.function_call.name === 'update_task_time' || result.function_call.name === 'update_task_info') {
-        const args = JSON.parse(result.function_call.arguments);
-        const apartmentId = args.taskId;
-        
-        // Get tasks for this apartment
-        const tasksResult = await this.taskService.getTasksByApartmentId(apartmentId);
-        if (!tasksResult.success || !tasksResult.tasks || tasksResult.tasks.length === 0) {
-          await this.sendMessage(String(chatId), tasksResult.message || `Завдань для квартири ${apartmentId} не знайдено.`);
-          return;
-        }
-
-        // Find the most relevant task (check-in for time updates, or first task for info updates)
-        let targetTask = tasksResult.tasks[0];
-        if (result.function_call.name === 'update_task_time') {
-          const checkinTask = tasksResult.tasks.find(task => task.taskType === 'checkin');
-          if (checkinTask) {
-            targetTask = checkinTask;
-          }
-        }
-
-        // Update the task ID in the arguments
-        args.taskId = targetTask.id;
-      }
 
       const functionResult = await this.functionService.executeFunction(
         result.function_call.name,

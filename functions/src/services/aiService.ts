@@ -1,9 +1,7 @@
 import { OpenAI } from "openai";
 import { defineString } from "firebase-functions/params";
 import { logger } from 'firebase-functions';
-import { db } from '../config/firebase';
-import { TaskTypes, TaskStatuses } from '../utils/constants';
-import { getKievDate } from '../utils/dateTime';
+import { Task } from "../models/Task";
 
 // Params
 const openaiApiKey = defineString("OPENAI_API_KEY");
@@ -64,7 +62,7 @@ export interface AIContext {
   chatId: string;
   isAdmin: boolean;
   assignedApartments: string[];
-  currentTasks: any[];
+  currentTasks: Task[];
 }
 
 // Function schemas for OpenAI
@@ -272,27 +270,34 @@ export class AIService {
       const { userId, chatId, isAdmin, assignedApartments, currentTasks } = context;
       const conversationContext = this.getConversationContext(chatId);
 
+      logger.info('[AI] Processing message:', {
+        text,
+        userId,
+        chatId,
+        isAdmin,
+        assignedApartments,
+        currentTasksCount: currentTasks.length,
+        conversationContextLength: conversationContext.length
+      });
+
+      // Clear context if it's a new conversation or command
+      if (text.startsWith('/') || conversationContext.length === 0) {
+        this.clearConversationContext(chatId);
+      }
+
       const completion = await openai.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4o',
         messages: [
           {
             role: 'system',
             content: systemPrompt,
           },
-          ...conversationContext.map((msg) => {
-            if (msg.role === 'function') {
-              return {
-                role: 'function',
-                name: msg.name,
-                content: msg.content,
-              };
-            }
-            return {
-              role: msg.role,
-              content: msg.content,
-              ...(msg.function_call && { function_call: msg.function_call }),
-            };
-          }),
+          ...conversationContext.map((msg) => ({
+            role: msg.role,
+            content: msg.content,
+            ...(msg.function_call && { function_call: msg.function_call }),
+            ...(msg.name && { name: msg.name })
+          })),
           {
             role: 'user',
             content: text,
@@ -312,15 +317,23 @@ export class AIService {
 
       const message = completion.choices[0].message;
       if (!message) {
+        logger.warn('[AI] No message returned from OpenAI');
         return { type: 'text', content: 'Помилка при обробці запиту.' };
       }
 
+      // Update context with user message
       this.updateConversationContext(chatId, {
         role: 'user',
         content: text,
       });
 
       if (message.function_call) {
+        logger.info('[AI] Function call detected:', {
+          functionName: message.function_call.name,
+          arguments: message.function_call.arguments
+        });
+
+        // Update context with assistant's function call
         this.updateConversationContext(chatId, {
           role: 'assistant',
           content: null,
@@ -333,6 +346,11 @@ export class AIService {
         };
       }
 
+      logger.info('[AI] Text response generated:', {
+        content: message.content
+      });
+
+      // Update context with assistant's response
       this.updateConversationContext(chatId, {
         role: 'assistant',
         content: message.content || '',
@@ -343,7 +361,12 @@ export class AIService {
         content: message.content || 'Добре, зрозумів.',
       };
     } catch (error) {
-      logger.error('Error in processMessage:', error);
+      logger.error('[AI] Error in processMessage:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        text,
+        context
+      });
       return { type: 'text', content: 'Помилка при обробці запиту. Спробуйте пізніше.' };
     }
   }
@@ -355,10 +378,17 @@ export class AIService {
     functionResult: FunctionResult
   ): Promise<{ type: 'text', content: string }> {
     try {
+      logger.info('[AI] Processing function result:', {
+        chatId,
+        functionName,
+        functionArgs,
+        functionResult
+      });
+
       const context = this.getConversationContext(chatId);
 
       const followUp = await openai.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },
           ...context.map((msg) => {
@@ -387,23 +417,38 @@ export class AIService {
 
       const message = followUp.choices[0].message;
       if (!message) {
+        logger.warn('[AI] No follow-up message returned from OpenAI');
         return { type: 'text', content: functionResult.message };
       }
 
       if (message.function_call) {
-        logger.info('Model tried another function call after update.');
+        logger.info('[AI] Follow-up function call detected:', {
+          functionName: message.function_call.name,
+          arguments: message.function_call.arguments
+        });
         return {
           type: 'text',
           content: 'Оновлено, але є ще функція. Наразі не обробляється.',
         };
       }
 
+      logger.info('[AI] Follow-up response generated:', {
+        content: message.content || functionResult.message
+      });
+
       return {
         type: 'text',
         content: message.content || functionResult.message,
       };
     } catch (error) {
-      logger.error('Error in processFunctionResult:', error);
+      logger.error('[AI] Error in processFunctionResult:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        chatId,
+        functionName,
+        functionArgs,
+        functionResult
+      });
       return { type: 'text', content: functionResult.message };
     }
   }

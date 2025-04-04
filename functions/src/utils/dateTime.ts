@@ -3,14 +3,76 @@ import { Timestamp } from 'firebase-admin/firestore';
 
 export const KIEV_TZ = "Europe/Kiev";
 
-export function getKievDate(offsetDays: number = 0): string {
-  return moment().tz(KIEV_TZ).add(offsetDays, "days").format("YYYY-MM-DD");
+interface KievDateOptions {
+  endOfDay?: boolean;
+  returnTimestamp?: boolean;
+  format?: string;
 }
 
-export function getTimestamp(): Date {
-  // For Firestore Timestamp fields, use FieldValue.serverTimestamp() in writes,
-  // but for general use, a JS Date is fine.
-  return new Date();
+export function getKievDate(offsetDays: number = 0, options: KievDateOptions = {}): string | Date | Timestamp {
+  const date = moment().tz(KIEV_TZ).add(offsetDays, "days");
+  
+  if (options.endOfDay) {
+    date.endOf('day');
+  } else {
+    date.startOf('day');
+  }
+
+  if (options.returnTimestamp) {
+    return Timestamp.fromDate(date.toDate());
+  }
+
+  if (options.format) {
+    return date.format(options.format);
+  }
+
+  return date.format("YYYY-MM-DD");
+}
+
+export function getKievDateRange(offsetDays: number = 0, daysRange: number = 7): { start: Timestamp; end: Timestamp } {
+  const start = moment().tz(KIEV_TZ).add(offsetDays, "days").startOf('day');
+  const end = moment().tz(KIEV_TZ).add(offsetDays + daysRange - 1, "days").endOf('day');
+
+  return {
+    start: Timestamp.fromDate(start.toDate()),
+    end: Timestamp.fromDate(end.toDate())
+  };
+}
+
+export function toKievDate(date: Date | Timestamp | string): moment.Moment {
+  if (date instanceof Timestamp) {
+    return moment(date.toDate()).tz(KIEV_TZ);
+  }
+  if (date instanceof Date) {
+    return moment(date).tz(KIEV_TZ);
+  }
+  return moment(date).tz(KIEV_TZ);
+}
+
+export function formatKievDate(
+  date: Date | Timestamp | string | null | undefined,
+  format: string = "DD.MM.YYYY"
+): string {
+  if (!date) return "N/A";
+  
+  try {
+    return toKievDate(date as Date | Timestamp | string).format(format);
+  } catch (error) {
+    return "Invalid Date";
+  }
+}
+
+export function isValidKievDate(date: any): boolean {
+  if (!date) return false;
+  try {
+    return toKievDate(date).isValid();
+  } catch {
+    return false;
+  }
+}
+
+export function getTimestamp(): Timestamp {
+  return Timestamp.now();
 }
 
 // Define a type for things that could be a Timestamp or Date
@@ -32,6 +94,10 @@ export function formatTimestamp(timestamp: DateInput, format: string = "DD.MM.YY
 
 module.exports = {
   getKievDate,
+  getKievDateRange,
+  toKievDate,
+  formatKievDate,
+  isValidKievDate,
   getTimestamp,
   formatTimestamp,
   KIEV_TZ,

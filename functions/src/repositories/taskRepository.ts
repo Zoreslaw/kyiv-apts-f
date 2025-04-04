@@ -2,7 +2,7 @@ import { Firestore, DocumentData, QueryDocumentSnapshot } from "firebase-admin/f
 import { ITaskData, Task } from "../models/Task";
 import { db } from "../config/firebase";
 import { logger } from "firebase-functions";
-import { getKievDate } from "../utils/dateTime";
+import { getKievDateRange, getTimestamp } from "../utils/dateTime";
 import { findByUserId } from "./cleaningAssignmentRepository";
 import { TaskTypes } from "../utils/constants";
 import { Timestamp } from "firebase-admin/firestore";
@@ -11,49 +11,73 @@ import { UserRoles } from "../utils/constants";
 
 const TASKS_COLLECTION = "tasks";
 
-async function findTasksByUserId(userId: string | number, isAdmin: boolean = false): Promise<Task[]> {
-  try {
-    const userIdStr = String(userId);
-    const today = getKievDate(0);
-    const maxDate = getKievDate(7);
+async function findTasksByUserId(userId: string): Promise<Task[]> {
+  logger.info(`Finding tasks for user ${userId}`);
+  
+  const user = await findByTelegramId(userId);
+  if (!user) {
+    logger.warn(`User ${userId} not found`);
+    return [];
+  }
 
-    // Get user's assigned apartments if not admin
-    let assignedApartments: string[] = [];
+  const { start: startTimestamp, end: endTimestamp } = getKievDateRange(0, 7);
+  logger.info(`Searching for tasks between ${startTimestamp.toDate()} and ${endTimestamp.toDate()}`);
+
+  let query = db.collection(TASKS_COLLECTION);
+  const querySnapshot = await query.get();
+  logger.info(`Found ${querySnapshot.size} total tasks`);
+
+  const tasks = querySnapshot.docs.map(doc => {
+    const data = doc.data();
+    let dueDate: Timestamp;
     
-    if (!isAdmin) {
-      const assignment = await findByUserId(userIdStr);
-      if (assignment) {
-        assignedApartments = assignment.apartmentIds || [];
-      }
+    // Handle different dueDate formats
+    if (data.dueDate instanceof Timestamp) {
+      dueDate = data.dueDate;
+    } else if (data.dueDate instanceof Date) {
+      dueDate = Timestamp.fromDate(data.dueDate);
+    } else if (typeof data.dueDate === 'string') {
+      dueDate = Timestamp.fromDate(new Date(data.dueDate));
+    } else {
+      dueDate = getTimestamp(); // Fallback to current time if invalid
+      logger.warn(`Invalid dueDate format for task ${doc.id}: ${data.dueDate}`);
     }
 
-    logger.info(`[TaskRepository] Assigned apartments: ${assignedApartments}`);
+    return new Task({
+      id: doc.id,
+      ...data,
+      createdAt: data.createdAt instanceof Timestamp ? data.createdAt : getTimestamp(),
+      updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt : getTimestamp(),
+      dueDate: dueDate,
+      reservationId: data.reservationId || '',
+      apartmentId: data.apartmentId || '',
+      address: data.address || '',
+      type: data.type || '',
+      status: data.status || 'pending'
+    } as ITaskData);
+  });
 
-    const taskSnap = await db
-      .collection(TASKS_COLLECTION)
-      .where('dueDate', '>=', today)
-      .where('dueDate', '<=', maxDate)
-      .orderBy('dueDate')
-      .get();
+  // Filter tasks by date range
+  const dateFilteredTasks = tasks.filter(task => {
+    const taskDate = task.dueDate;
+    return taskDate >= startTimestamp && taskDate <= endTimestamp;
+  });
+  logger.info(`Found ${dateFilteredTasks.length} tasks in date range`);
 
-    const tasks: Task[] = [];
-    taskSnap.forEach((doc) => {
-      const data = doc.data();
-      if (isAdmin || assignedApartments.includes(String(data.apartmentId))) {
-        tasks.push(new Task({
-          id: doc.id,
-          ...data,
-          createdAt: data.createdAt?.toDate() || new Date(),
-          updatedAt: data.updatedAt?.toDate() || new Date(),
-        } as ITaskData));
-      }
-    });
-
-    return tasks;
-  } catch (error) {
-    logger.error(`[TaskRepository] Error in findTasksByUserId:`, error);
-    throw error;
+  if (user.role === UserRoles.ADMIN) {
+    logger.info(`User ${userId} is admin, returning all ${dateFilteredTasks.length} tasks`);
+    return dateFilteredTasks;
   }
+
+  // Get user's assigned apartments from cleaningAssignments collection
+  const cleaningAssignment = await findByUserId(userId);
+  const assignedApartmentIds = cleaningAssignment?.apartmentIds || [];
+  logger.info(`User ${userId} has ${assignedApartmentIds.length} assigned apartments: ${assignedApartmentIds.join(', ')}`);
+
+  const filteredTasks = dateFilteredTasks.filter(task => assignedApartmentIds.includes(task.apartmentId));
+  logger.info(`Found ${filteredTasks.length} tasks for user's assigned apartments`);
+
+  return filteredTasks;
 }
 
 export async function updateTaskTime(
@@ -192,24 +216,34 @@ async function updateTaskInfo(
   }
 }
 
-async function updateTask(taskId: string, updateData: Partial<ITaskData>): Promise<Task | null> {
-  const docRef = db.collection(TASKS_COLLECTION).doc(taskId);
-  await docRef.update(updateData);
+async function updateTask(taskId: string, data: Partial<ITaskData>): Promise<Task> {
+  try {
+    const docRef = db.collection(TASKS_COLLECTION).doc(taskId);
+    const docData = {
+      ...data,
+      updatedAt: Timestamp.now()
+    };
 
-  const updatedDoc = await docRef.get();
-  if (!updatedDoc.exists) {
-      return null;
+    await docRef.update(docData);
+    
+    // Fetch the updated task
+    const updatedTask = await findById(taskId);
+    if (!updatedTask) {
+      throw new Error(`Task with ID ${taskId} not found after update`);
+    }
+    
+    return updatedTask;
+  } catch (error) {
+    logger.error("[TaskRepository] Error in updateTask:", error);
+    throw error;
   }
-
-  const data = updatedDoc.data() as ITaskData;
-  return new Task(data);
 }
 
 async function findTasksByReservationAndType(reservationId: string, taskType: TaskTypes): Promise<Task[]> {
     const snapshot = await db
         .collection(TASKS_COLLECTION)
         .where('reservationId', '==', reservationId)
-        .where('taskType', '==', taskType)
+        .where('type', '==', taskType)
         .get();
 
     return snapshot.docs.map(doc => new Task({
@@ -222,76 +256,162 @@ async function deleteTask(taskId: string): Promise<void> {
     await db.collection(TASKS_COLLECTION).doc(taskId).delete();
 }
 
-async function createTask(taskData: Omit<ITaskData, 'id'>): Promise<Task> {
-    try {
-        // Check for existing tasks with same reservation and type
-        const existingTasks = await findTasksByReservationAndType(
-            taskData.reservationId,
-            taskData.taskType
-        );
-
-        // If duplicates exist, keep the first one and delete others
-        if (existingTasks.length > 0) {
-            logger.info(`Found ${existingTasks.length} existing tasks for reservation ${taskData.reservationId} and type ${taskData.taskType}`);
-            
-            // Keep the first task and delete others
-            const tasksToDelete = existingTasks.slice(1);
-            for (const task of tasksToDelete) {
-                logger.info(`Deleting duplicate task: ${task.id}`);
-                await deleteTask(task.id);
-            }
-
-            // Update the remaining task with new data
-            const remainingTask = existingTasks[0];
-            logger.info(`Updating remaining task: ${remainingTask.id}`);
-            const updatedTask = await updateTask(remainingTask.id, {
-                ...taskData,
-                id: remainingTask.id
-            });
-            
-            if (!updatedTask) {
-                throw new Error(`Failed to update task ${remainingTask.id}`);
-            }
-            
-            return updatedTask;
-        }
-
-        // If no duplicates, create new task
-        const docRef = await db.collection(TASKS_COLLECTION).add(taskData);
-        const snapshot = await docRef.get();
-        const data = snapshot.data() as DocumentData;
-        
-        return new Task({
-            id: snapshot.id,
-            ...taskData,
-        });
-    } catch (error) {
-        logger.error('Error in createTask:', error);
-        throw error;
-    }
-}
-
 async function findById(taskId: string): Promise<Task | null> {
+  try {
     const docRef = db.collection(TASKS_COLLECTION).doc(taskId);
     const snapshot = await docRef.get();
     if (!snapshot.exists) {
-        return null;
+      return null;
     }
     const data = snapshot.data() as ITaskData;
-    
-    return new Task(data);
+    return new Task({
+      ...data,
+      id: snapshot.id
+    });
+  } catch (error) {
+    logger.error("[TaskRepository] Error in findById:", error);
+    throw error;
+  }
 }
 
-async function findTasksByApartmentId(apartmentId: string): Promise<Task[]> {
-    const snapshot = await db
-        .collection(TASKS_COLLECTION)
-        .where('apartmentId', '==', apartmentId)
-        .get();
+async function findByReservationId(reservationId: string): Promise<Task[]> {
+  try {
+    const snapshot = await db.collection(TASKS_COLLECTION)
+      .where("reservationId", "==", reservationId)
+      .get();
+    if (snapshot.empty) {
+      return [];
+    }
+    return snapshot.docs.map((doc: QueryDocumentSnapshot): Task => {
+      const data = doc.data() as ITaskData;
+      return new Task({
+        ...data,
+        id: doc.id
+      });
+    });
+  } catch (error) {
+    logger.error("[TaskRepository] Error in findByReservationId:", error);
+    throw error;
+  }
+}
 
-    return snapshot.docs.map(doc => new Task({
-        id: doc.id,
-        ...doc.data()
-    } as ITaskData));
+async function findByApartmentId(apartmentId: string): Promise<Task[]> {
+  try {
+    const snapshot = await db.collection(TASKS_COLLECTION)
+      .where("apartmentId", "==", apartmentId)
+      .get();
+    if (snapshot.empty) {
+      return [];
+    }
+    return snapshot.docs.map((doc: QueryDocumentSnapshot): Task => {
+      const data = doc.data() as ITaskData;
+      return new Task({
+        ...data,
+        id: doc.id
+      });
+    });
+  } catch (error) {
+    logger.error("[TaskRepository] Error in findByApartmentId:", error);
+    throw error;
+  }
+}
+
+async function createTask(data: Omit<ITaskData, 'id'>): Promise<Task> {
+  try {
+    // Generate a deterministic ID based on reservationId and type
+    const taskId = `${data.reservationId}_${data.type}`;
+    const docRef = db.collection(TASKS_COLLECTION).doc(taskId);
+    
+    const now = getTimestamp();
+    
+    // Ensure dueDate is a Timestamp
+    let dueDate: Timestamp;
+    if (data.dueDate instanceof Timestamp) {
+      dueDate = data.dueDate;
+    } else if (data.dueDate instanceof Date) {
+      dueDate = Timestamp.fromDate(data.dueDate);
+    } else if (typeof data.dueDate === 'string') {
+      dueDate = Timestamp.fromDate(new Date(data.dueDate));
+    } else {
+      dueDate = now;
+      logger.warn(`Invalid dueDate format for new task ${taskId}: ${data.dueDate}, using current time`);
+    }
+
+    const taskData = {
+      ...data,
+      id: taskId,
+      dueDate: dueDate,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    await docRef.set(taskData);
+    logger.info(`Created task ${taskId} for reservation ${data.reservationId} with dueDate ${dueDate.toDate()}`);
+    
+    return new Task(taskData);
+  } catch (error) {
+    logger.error(`Error creating task:`, error);
+    throw error;
+  }
+}
+
+async function getTasksById(taskId: string): Promise<{ success: boolean; message?: string; tasks?: Task[] }> {
+  try {
+    logger.info(`[TaskRepository] Getting task by ID: ${taskId}`);
+    
+    // First try to find by exact task ID
+    const task = await findById(taskId);
+    if (task) {
+      logger.info(`[TaskRepository] Found task by exact ID: ${taskId}`);
+      return {
+        success: true,
+        tasks: [task]
+      };
+    }
+
+    // If not found by exact ID, try to find by apartment ID
+    const tasks = await findByApartmentId(taskId);
+    if (tasks.length > 0) {
+      logger.info(`[TaskRepository] Found ${tasks.length} tasks for apartment ID: ${taskId}`);
+      
+      // Filter tasks by date range (next 7 days)
+      const { start: startTimestamp, end: endTimestamp } = getKievDateRange(0, 7);
+      const filteredTasks = tasks.filter(task => {
+        const taskDate = task.dueDate instanceof Timestamp ? 
+          task.dueDate : 
+          task.dueDate instanceof Date ? 
+            Timestamp.fromDate(task.dueDate) : 
+            Timestamp.fromDate(new Date(task.dueDate));
+        return taskDate >= startTimestamp && taskDate <= endTimestamp;
+      });
+
+      if (filteredTasks.length === 0) {
+        return {
+          success: false,
+          message: `Немає майбутніх завдань для квартири ${taskId} на наступний тиждень.`
+        };
+      }
+
+      logger.info(`[TaskRepository] Found ${filteredTasks.length} tasks in date range for apartment ID: ${taskId}`);
+      return {
+        success: true,
+        tasks: filteredTasks
+      };
+    }
+
+    // No tasks found
+    logger.warn(`[TaskRepository] No tasks found for ID: ${taskId}`);
+    return {
+      success: false,
+      message: `Завдань з ID ${taskId} не знайдено.`
+    };
+  } catch (error) {
+    logger.error("[TaskRepository] Error in getTasksById:", error);
+    return {
+      success: false,
+      message: "Помилка при отриманні завдань. Спробуйте пізніше."
+    };
+  }
 }
 
 export {
@@ -302,5 +422,7 @@ export {
   updateTaskInfo,
   findTasksByReservationAndType,
   deleteTask,
-  findTasksByApartmentId
+  findByReservationId,
+  findByApartmentId,
+  getTasksById
 }; 

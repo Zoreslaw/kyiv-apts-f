@@ -3,6 +3,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 export interface IApartmentData {
     id: string;
     address: string;
+    name?: string;
     internalName?: string | null;
     notes?: string | null;
     standardKeysCount?: number;
@@ -13,6 +14,7 @@ export interface IApartmentData {
 export class Apartment implements IApartmentData {
     id: string;
     address: string;
+    name: string;
     internalName: string | null;
     notes: string | null;
     standardKeysCount: number;
@@ -22,6 +24,7 @@ export class Apartment implements IApartmentData {
     constructor(data: IApartmentData) {
         this.id = data.id;
         this.address = data.address;
+        this.name = data.name || data.internalName || data.address;
         this.internalName = data.internalName || null;
         this.notes = data.notes || null;
         this.standardKeysCount = data.standardKeysCount ?? 1;

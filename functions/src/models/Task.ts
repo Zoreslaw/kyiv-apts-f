@@ -6,7 +6,7 @@ export interface ITaskData {
     reservationId: string;
     apartmentId: string;
     address: string;
-    taskType: TaskTypes;
+    type: TaskTypes;
     status: TaskStatuses;
     assignedStaffId?: string | null;
     dueDate: string | Date | Timestamp;
@@ -18,6 +18,11 @@ export interface ITaskData {
     checkoutTime?: string | null;
     sumToCollect?: number | null;
     keysCount?: number | null;
+    guestName?: string;
+    guestPhone?: string | null;
+    guestEmail?: string | null;
+    apartmentName?: string;
+    date?: string | Date | Timestamp;
 }
 
 export class Task implements ITaskData {
@@ -25,7 +30,7 @@ export class Task implements ITaskData {
     reservationId: string;
     apartmentId: string;
     address: string;
-    taskType: TaskTypes;
+    type: TaskTypes;
     status: TaskStatuses;
     assignedStaffId: string | null;
     dueDate: string | Date | Timestamp;
@@ -37,13 +42,18 @@ export class Task implements ITaskData {
     checkoutTime: string | null;
     sumToCollect: number | null;
     keysCount: number | null;
+    guestName: string;
+    guestPhone: string | null;
+    guestEmail: string | null;
+    apartmentName: string;
+    date: string | Date | Timestamp;
 
     constructor(data: ITaskData) {
         this.id = data.id;
         this.reservationId = data.reservationId;
         this.apartmentId = data.apartmentId;
         this.address = data.address;
-        this.taskType = data.taskType;
+        this.type = data.type;
         this.status = data.status;
         this.assignedStaffId = data.assignedStaffId || null;
         this.dueDate = data.dueDate;
@@ -55,5 +65,10 @@ export class Task implements ITaskData {
         this.checkoutTime = data.checkoutTime || null;
         this.sumToCollect = data.sumToCollect ?? null;
         this.keysCount = data.keysCount ?? null;
+        this.guestName = data.guestName || '';
+        this.guestPhone = data.guestPhone || null;
+        this.guestEmail = data.guestEmail || null;
+        this.apartmentName = data.apartmentName || '';
+        this.date = data.date || data.dueDate;
     }
 } 

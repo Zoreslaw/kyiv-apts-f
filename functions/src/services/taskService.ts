@@ -1,9 +1,10 @@
 import { Timestamp } from "firebase-admin/firestore";
-import { findTasksByUserId, updateTask, findTasksByApartmentId } from "../repositories/taskRepository";
+import { findTasksByUserId, updateTask, findByApartmentId } from "../repositories/taskRepository";
 import { Task, ITaskData } from "../models/Task";
 import { TaskStatuses, TaskTypes } from "../utils/constants";
 import { logger } from "firebase-functions";
 import { findOrCreateUser } from "./userService";
+import { getKievDateRange, toKievDate, formatKievDate } from "../utils/dateTime";
 
 async function getTasksForUser(userId: string): Promise<Task[]> {
   return findTasksByUserId(userId);
@@ -22,14 +23,16 @@ export class TaskService {
     const grouped: Record<string, { checkouts: Task[]; checkins: Task[] }> = {};
     
     tasks.forEach((task) => {
-      const date = String(task.dueDate);
+      // Convert Timestamp to YYYY-MM-DD string format using our utility
+      const date = formatKievDate(task.dueDate, "YYYY-MM-DD");
+
       if (!grouped[date]) {
         grouped[date] = { checkouts: [], checkins: [] };
       }
       
-      if (task.taskType === TaskTypes.CHECK_OUT) {
+      if (task.type === TaskTypes.CHECK_OUT) {
         grouped[date].checkouts.push(task);
-      } else if (task.taskType === TaskTypes.CHECK_IN) {
+      } else if (task.type === TaskTypes.CHECK_IN) {
         grouped[date].checkins.push(task);
       }
     });
@@ -47,13 +50,13 @@ export class TaskService {
       for (const task of checkouts) {
         msg += `🔴 *ID:* ${task.apartmentId}\n`;
         msg += `🏠 *Адреса:* ${task.address}\n`;
-        msg += `👤 *Гість:* ${task.notes?.split('.')[0] || 'Unknown'}\n`;
+        msg += `👤 *Гість:* ${task.guestName || 'Unknown'}\n`;
         msg += task.checkoutTime
           ? `⏰ *Виїзд:* ${task.checkoutTime}\n`
           : "⏰ *Виїзд:* не призначено\n";
         msg += `💰 *Сума:* ${task.sumToCollect || 0}\n`;
         msg += `🔑 *Ключів:* ${task.keysCount || 1}\n`;
-        msg += `📞 *Контакти:* ${task.notes?.split('.')[1] || 'Unknown'}\n\n`;
+        msg += `📞 *Контакти:* ${task.guestPhone || 'Unknown'}\n\n`;
       }
     }
 
@@ -64,13 +67,13 @@ export class TaskService {
       for (const task of checkins) {
         msg += `🟢 *ID:* ${task.apartmentId}\n`;
         msg += `🏠 *Адреса:* ${task.address}\n`;
-        msg += `👤 *Гість:* ${task.notes?.split('.')[0] || 'Unknown'}\n`;
+        msg += `👤 *Гість:* ${task.guestName || 'Unknown'}\n`;
         msg += task.checkinTime
           ? `⏰ *Заїзд:* ${task.checkinTime}\n`
           : "⏰ *Заїзд:* не призначено\n";
         msg += `💰 *Сума:* ${task.sumToCollect || 0}\n`;
         msg += `🔑 *Ключів:* ${task.keysCount || 1}\n`;
-        msg += `📞 *Контакти:* ${task.notes?.split('.')[1] || 'Unknown'}\n\n`;
+        msg += `📞 *Контакти:* ${task.guestPhone || 'Unknown'}\n\n`;
       }
     }
 
@@ -86,18 +89,32 @@ export class TaskService {
       const tasks = await findTasksByUserId(chatIdStr);
       logger.info(`[TaskService] Found ${tasks.length} tasks for user ${chatIdStr}`);
 
-      if (tasks.length === 0) {
-        logger.info(`[TaskService] No tasks found for user ${chatIdStr}`);
+      // Use getKievDateRange for date filtering
+      const { start, end } = getKievDateRange(0, 7);
+      
+      const upcomingTasks = tasks.filter((task: Task) => {
+        const taskDate = task.dueDate instanceof Timestamp ? 
+          task.dueDate : 
+          task.dueDate instanceof Date ? 
+            Timestamp.fromDate(task.dueDate) : 
+            Timestamp.fromDate(new Date(task.dueDate));
+        return taskDate >= start && taskDate <= end;
+      });
+
+      logger.info(`[TaskService] Filtered to ${upcomingTasks.length} upcoming tasks`);
+
+      if (upcomingTasks.length === 0) {
+        logger.info(`[TaskService] No upcoming tasks found for user ${chatIdStr}`);
         return {
           success: false,
-          message: "На тебе не додано жодних завдань. :("
+          message: "На тебе не додано жодних завдань на найближчі дні. :("
         };
       }
 
-      logger.info(`[TaskService] Successfully retrieved ${tasks.length} tasks for user ${chatIdStr}`);
+      logger.info(`[TaskService] Successfully retrieved ${upcomingTasks.length} tasks for user ${chatIdStr}`);
       return {
         success: true,
-        tasks
+        tasks: upcomingTasks
       };
     } catch (err) {
       logger.error("[TaskService] Error in getTasksForUser:", err);
@@ -115,7 +132,7 @@ export class TaskService {
 
   async getTasksByApartmentId(apartmentId: string): Promise<{ success: boolean; message?: string; tasks?: Task[] }> {
     try {
-      const tasks = await findTasksByApartmentId(apartmentId);
+      const tasks = await findByApartmentId(apartmentId);
       if (tasks.length === 0) {
         return {
           success: false,
@@ -123,16 +140,16 @@ export class TaskService {
         };
       }
 
-      // Filter tasks to only include upcoming ones (within next 7 days)
-      const today = new Date();
-      const nextWeek = new Date();
-      nextWeek.setDate(today.getDate() + 7);
+      // Use getKievDateRange for date filtering
+      const { start, end } = getKievDateRange(0, 7);
       
-      const upcomingTasks = tasks.filter(task => {
-        const taskDate = task.dueDate instanceof Date ? task.dueDate : 
-                        task.dueDate instanceof Timestamp ? task.dueDate.toDate() : 
-                        new Date(task.dueDate);
-        return taskDate >= today && taskDate <= nextWeek;
+      const upcomingTasks = tasks.filter((task: Task) => {
+        const taskDate = task.dueDate instanceof Timestamp ? 
+          task.dueDate : 
+          task.dueDate instanceof Date ? 
+            Timestamp.fromDate(task.dueDate) : 
+            Timestamp.fromDate(new Date(task.dueDate));
+        return taskDate >= start && taskDate <= end;
       });
 
       if (upcomingTasks.length === 0) {

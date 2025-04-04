@@ -99,19 +99,15 @@ export async function syncReservationsAndTasks(): Promise<void> {
 
           // Upsert Reservation
           let reservation: Reservation;
-          const existingReservation = reservationData.id 
-            ? await findById(reservationData.id) 
-            : null;
+          const existingReservation = await findById(reservationData.id!);
             
           if (existingReservation) {
             reservation = existingReservation;
             logger.info(`[syncReservationsAndTasks] Using existing reservation: ${reservation.id}`);
           } else {
             const now = Timestamp.now();
-            const reservationId = `${cmsCheckout.apartment_id}_${date}_checkout`;
             reservation = await createReservation({
               ...reservationData,
-              id: reservationId,
               createdAt: now,
               updatedAt: now
             } as IReservationData);
@@ -135,19 +131,15 @@ export async function syncReservationsAndTasks(): Promise<void> {
 
           // Upsert Reservation
           let reservation: Reservation;
-          const existingReservation = reservationData.id 
-            ? await findById(reservationData.id) 
-            : null;
+          const existingReservation = await findById(reservationData.id!);
             
           if (existingReservation) {
             reservation = existingReservation;
             logger.info(`[syncReservationsAndTasks] Using existing reservation: ${reservation.id}`);
           } else {
             const now = Timestamp.now();
-            const reservationId = `${cmsCheckin.apartment_id}_${date}_checkin`;
             reservation = await createReservation({
               ...reservationData,
-              id: reservationId,
               createdAt: now,
               updatedAt: now
             } as IReservationData);
@@ -173,9 +165,12 @@ export async function syncReservationsAndTasks(): Promise<void> {
 
 // Helper to map CMS data to our Reservation model structure
 function mapCmsToReservation(cmsData: CmsData, date: string, type: string): Partial<IReservationData> {
+    // Generate a deterministic ID
+    const reservationId = `${cmsData.apartment_id}_${date}_${type}`;
+
     // Adjust field names based on your actual CMS API response
     const reservation: Partial<IReservationData> = {
-        id: cmsData.reservation_id, // Only set if we have a stable ID
+        id: reservationId, // Always use our deterministic ID
         apartmentId: String(cmsData.apartment_id),
         guestName: cmsData.guest_name || "Unknown",
         guestContact: cmsData.guest_contact || null,
@@ -197,33 +192,45 @@ function mapCmsToReservation(cmsData: CmsData, date: string, type: string): Part
 
 // Helper to create or update a Task based on CMS data
 async function createOrUpdateTaskFromCmsData(
-  reservation: Reservation, 
-  cmsData: CmsData, 
-  taskType: TaskTypes, 
-  date: string, 
+  reservation: Reservation,
+  cmsData: any,
+  taskType: TaskTypes,
+  date: string,
   apartment?: Apartment
-): Promise<void> {
-    try {
-        const taskData: Partial<ITaskData> = {
-            reservationId: reservation.id,
-            apartmentId: reservation.apartmentId,
-            address: apartment?.address || cmsData.apartment_address || "Address Missing",
-            taskType: taskType,
-            dueDate: date,
-            status: TaskStatuses.PENDING,
-            notes: `Guest: ${reservation.guestName}. Collect: ${reservation.sumToCollect}. Keys: ${reservation.keysCount}.`,
-            sumToCollect: reservation.sumToCollect,
-            keysCount: reservation.keysCount,
-            updatedAt: Timestamp.now(),
-            // Set default times based on task type
-            checkinTime: taskType === TaskTypes.CHECK_IN ? DEFAULT_CHECKIN_TIME : null,
-            checkoutTime: taskType === TaskTypes.CHECK_OUT ? DEFAULT_CHECKOUT_TIME : null,
-        };
+): Promise<Task> {
+  const taskId = `${reservation.id}_${taskType}`;
+  const taskData: ITaskData = {
+    id: taskId,
+    reservationId: reservation.id,
+    apartmentId: reservation.apartmentId,
+    address: apartment?.address || cmsData.apartment_address || "Address Missing",
+    type: taskType,
+    status: TaskStatuses.PENDING,
+    dueDate: Timestamp.fromDate(new Date(date)),
+    guestName: reservation.guestName,
+    guestPhone: reservation.guestContact,
+    guestEmail: null,
+    notes: `Guest: ${reservation.guestName}. Collect: ${reservation.sumToCollect}. Keys: ${reservation.keysCount}.`,
+    apartmentName: apartment?.name || '',
+    sumToCollect: reservation.sumToCollect,
+    keysCount: reservation.keysCount,
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now()
+  };
 
-        // The repository's createTask function will handle deduplication
-        await createTask(taskData as Omit<ITaskData, 'id'>);
-    } catch (error) {
-        logger.error(`Error in createOrUpdateTaskFromCmsData:`, error);
-        throw error;
-    }
+  let task: Task;
+  const existingTask = await findTaskById(taskId);
+  
+  if (existingTask) {
+    task = await updateTask(taskId, {
+      ...taskData,
+      updatedAt: Timestamp.now()
+    });
+    logger.info(`[createOrUpdateTaskFromCmsData] Updated task: ${task.id}`);
+  } else {
+    task = await createTask(taskData);
+    logger.info(`[createOrUpdateTaskFromCmsData] Created new task: ${task.id}`);
+  }
+
+  return task;
 } 

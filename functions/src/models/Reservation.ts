@@ -5,6 +5,9 @@ export interface IReservationData {
     apartmentId: string;
     guestName: string;
     guestContact?: string | null;
+    guestPhone?: string | null;
+    guestEmail?: string | null;
+    notes?: string | null;
     checkinDate: string | Date | Timestamp; 
     checkoutDate: string | Date | Timestamp;
     bookingSource?: string | null;
@@ -19,6 +22,9 @@ export class Reservation implements IReservationData {
     apartmentId: string;
     guestName: string;
     guestContact: string | null;
+    guestPhone: string | null;
+    guestEmail: string | null;
+    notes: string | null;
     checkinDate: string | Date | Timestamp;
     checkoutDate: string | Date | Timestamp;
     bookingSource: string | null;
@@ -32,6 +38,9 @@ export class Reservation implements IReservationData {
         this.apartmentId = data.apartmentId;
         this.guestName = data.guestName;
         this.guestContact = data.guestContact || null;
+        this.guestPhone = data.guestPhone || null;
+        this.guestEmail = data.guestEmail || null;
+        this.notes = data.notes || null;
         this.checkinDate = data.checkinDate;
         this.checkoutDate = data.checkoutDate;
         this.bookingSource = data.bookingSource || null;
