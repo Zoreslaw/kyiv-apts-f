@@ -71,26 +71,26 @@ export const functionSchemas = [
     type: 'function' as const,
     function: {
       name: 'update_task_time',
-      description: 'Updates checkin or checkout time for a given task.',
+      description: 'Updates the check-in or check-out time for a task.',
       parameters: {
         type: 'object',
         properties: {
           taskId: {
             type: 'string',
-            description: 'Unique Firestore doc ID, e.g. "2025-03-15_562_checkin"',
+            description: 'ID of the task to update',
           },
           newTime: {
             type: 'string',
-            description: 'New time in "HH:00" format.',
+            description: 'New time in HH:00 format',
           },
           changeType: {
             type: 'string',
             enum: ['checkin', 'checkout'],
-            description: 'Which time to update? "checkin" or "checkout" only.',
+            description: 'Whether to update check-in or check-out time',
           },
           userId: {
             type: 'string',
-            description: 'Telegram user ID for logging',
+            description: 'Telegram user ID of the person making the change',
           },
         },
         required: ['taskId', 'newTime', 'changeType', 'userId'],
@@ -102,25 +102,25 @@ export const functionSchemas = [
     type: 'function' as const,
     function: {
       name: 'update_task_info',
-      description: 'Updates sumToCollect and/or keysCount for a task.',
+      description: 'Updates additional task information like sum to collect and keys count.',
       parameters: {
         type: 'object',
         properties: {
           taskId: {
             type: 'string',
-            description: 'Unique Firestore doc ID of the task',
+            description: 'ID of the task to update',
           },
           newSumToCollect: {
-            type: ['number', 'null'],
-            description: 'Optional new sum to collect (if updating).',
+            type: 'number',
+            description: 'New sum to collect (optional)',
           },
           newKeysCount: {
-            type: ['number', 'null'],
-            description: 'Optional new number of keys (if updating).',
+            type: 'number',
+            description: 'New number of keys to collect (optional)',
           },
           userId: {
             type: 'string',
-            description: 'Telegram user ID for logging',
+            description: 'Telegram user ID of the person making the change',
           },
         },
         required: ['taskId', 'userId'],
@@ -131,48 +131,14 @@ export const functionSchemas = [
   {
     type: 'function' as const,
     function: {
-      name: 'manage_apartment_assignments',
-      description: 'Manages apartment assignments for users (admin only).',
+      name: 'get_user_apartments',
+      description: 'Shows apartments assigned to a specific user.',
       parameters: {
         type: 'object',
         properties: {
           targetUserId: {
             type: 'string',
-            description: 'Telegram user ID OR partial name/username of user to modify',
-          },
-          action: {
-            type: 'string',
-            enum: ['add', 'remove'],
-            description: 'Whether to add or remove apartments',
-          },
-          apartmentIds: {
-            type: 'array',
-            items: {
-              type: 'string',
-            },
-            description: 'Array of apartment IDs to add or remove',
-          },
-          isAdmin: {
-            type: 'boolean',
-            description: 'Whether the requesting user is an admin',
-          },
-        },
-        required: ['targetUserId', 'action', 'apartmentIds', 'isAdmin'],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function' as const,
-    function: {
-      name: 'show_user_apartments',
-      description: 'Shows all apartments assigned to a user (admin only).',
-      parameters: {
-        type: 'object',
-        properties: {
-          targetUserId: {
-            type: 'string',
-            description: 'Telegram user ID or name of user to view',
+            description: 'Telegram user ID OR partial name/username of user to check',
           },
           isAdmin: {
             type: 'boolean',
@@ -210,12 +176,12 @@ Available Functions:
    - sumToCollect: Amount to collect from guest (in UAH)
    - keysCount: Number of keys to collect/return
 
-3) "manage_apartment_assignments": Manages apartment assignments (admin only)
+3) "assign_apartments": Manages apartment assignments (admin only)
    - Can add or remove apartment IDs for specific users
    - Must provide target user's Telegram ID
    - Must be an admin to use this function
 
-4) "show_user_apartments": Lists all apartments assigned to a user (admin only)
+4) "get_user_apartments": Lists all apartments assigned to a user (admin only)
    - Must be an admin to use this function
    - Just mention user by name or @username
    - The bot will automatically find their Telegram ID
