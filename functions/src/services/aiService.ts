@@ -86,11 +86,11 @@ export const functionSchemas = [
           changeType: {
             type: 'string',
             enum: ['checkin', 'checkout'],
-            description: 'Whether to update check-in or check-out time',
+            description: 'Type of time to update',
           },
           userId: {
             type: 'string',
-            description: 'Telegram user ID of the person making the change',
+            description: 'ID of the user making the change',
           },
         },
         required: ['taskId', 'newTime', 'changeType', 'userId'],
@@ -102,7 +102,7 @@ export const functionSchemas = [
     type: 'function' as const,
     function: {
       name: 'update_task_info',
-      description: 'Updates additional task information like sum to collect and keys count.',
+      description: 'Updates additional information for a task such as sum to collect and keys count.',
       parameters: {
         type: 'object',
         properties: {
@@ -112,18 +112,52 @@ export const functionSchemas = [
           },
           newSumToCollect: {
             type: 'number',
-            description: 'New sum to collect (optional)',
+            description: 'New sum to collect in UAH',
           },
           newKeysCount: {
             type: 'number',
-            description: 'New number of keys to collect (optional)',
+            description: 'New number of keys',
           },
           userId: {
             type: 'string',
-            description: 'Telegram user ID of the person making the change',
+            description: 'ID of the user making the change',
           },
         },
         required: ['taskId', 'userId'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'assign_apartments',
+      description: 'Assigns or removes apartments for a specific user.',
+      parameters: {
+        type: 'object',
+        properties: {
+          targetUserId: {
+            type: 'string',
+            description: 'Telegram user ID OR partial name/username of user to assign apartments to',
+          },
+          action: {
+            type: 'string',
+            enum: ['add', 'remove'],
+            description: 'Whether to add or remove apartments',
+          },
+          apartmentIds: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+            description: 'List of apartment IDs to assign or remove',
+          },
+          isAdmin: {
+            type: 'boolean',
+            description: 'Whether the requesting user is an admin',
+          },
+        },
+        required: ['targetUserId', 'action', 'apartmentIds', 'isAdmin'],
         additionalProperties: false,
       },
     },

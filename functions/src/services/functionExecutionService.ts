@@ -1,7 +1,7 @@
 import { logger } from "firebase-functions";
 import { Timestamp } from "firebase-admin/firestore";
 import { updateTask } from "../repositories/taskRepository";
-import { findByTelegramId as findUserById } from "../repositories/userRepository";
+import { findByTelegramId as findUserById, findByUsernameOrName } from "../repositories/userRepository";
 import { findByUserId as findAssignmentByUserId, createAssignment, updateAssignment } from "../repositories/cleaningAssignmentRepository";
 import { TaskService } from "./taskService";
 import { TaskTimeUpdate, TaskInfoUpdate, ApartmentAssignment, UserApartmentsQuery } from './aiService';
@@ -188,7 +188,7 @@ export class FunctionExecutionService {
   }
 
   private async handleManageApartmentAssignments(
-    targetUserId: string,
+    targetUsername: string,
     action: 'add' | 'remove',
     apartmentIds: string[],
     isAdmin: boolean
@@ -201,10 +201,18 @@ export class FunctionExecutionService {
         };
       }
 
-      const assignment = await findAssignmentByUserId(targetUserId);
+      const user = await findByUsernameOrName(targetUsername);
+      if (!user) {
+        return {
+          success: false,
+          message: 'Користувача не знайдено.'
+        };
+      }
+
+      const assignment = await findAssignmentByUserId(user.id);
       if (!assignment) {
         await createAssignment({
-          userId: targetUserId,
+          userId: user.id,
           apartmentIds,
           createdAt: Timestamp.now(),
           updatedAt: Timestamp.now()
@@ -231,7 +239,7 @@ export class FunctionExecutionService {
       logger.error('[Function] Error managing apartment assignments:', {
         error: error instanceof Error ? error.message : 'Unknown error',
         stack: error instanceof Error ? error.stack : undefined,
-        targetUserId,
+        targetUsername,
         action,
         apartmentIds
       });
@@ -243,11 +251,26 @@ export class FunctionExecutionService {
   }
 
   private async handleShowUserApartments(
-    targetUserId: string,
+    targetUsername: string,
     isAdmin: boolean
   ): Promise<{ success: boolean; message: string }> {
     try {
-      const assignment = await findAssignmentByUserId(targetUserId);
+      if (!isAdmin) {
+        return {
+          success: false,
+          message: 'У вас немає прав для перегляду квартир цього користувача.'
+        };
+      }
+
+      const user = await findByUsernameOrName(targetUsername);
+      if (!user) {
+        return {
+          success: false,
+          message: 'Користувача не знайдено.'
+        };
+      }
+
+      const assignment = await findAssignmentByUserId(user.id);
       if (!assignment) {
         return {
           success: false,
@@ -255,7 +278,7 @@ export class FunctionExecutionService {
         };
       }
 
-      if (!isAdmin && targetUserId !== assignment.userId) {
+      if (!isAdmin && user.id !== assignment.userId) {
         return {
           success: false,
           message: 'У вас немає прав для перегляду квартир цього користувача.'
@@ -270,7 +293,7 @@ export class FunctionExecutionService {
       logger.error('[Function] Error showing user apartments:', {
         error: error instanceof Error ? error.message : 'Unknown error',
         stack: error instanceof Error ? error.stack : undefined,
-        targetUserId
+        targetUsername
       });
       return {
         success: false,
