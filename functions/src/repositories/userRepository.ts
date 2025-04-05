@@ -11,28 +11,44 @@ type UserUpdateData = Partial<Omit<IUserData, 'id'>>;
 async function findByTelegramId(telegramId: string | number): Promise<User | null> {
   try {
     const telegramIdStr = String(telegramId);
-    // Try by userId first
-    let snap = await db
-      .collection("users")
-      .where("userId", "==", telegramIdStr)
+    const telegramIdNum = Number(telegramId);
+    
+    // First try direct document lookup by ID
+    try {
+      const docRef = db.collection("users").doc(telegramIdStr);
+      const docSnap = await docRef.get();
+      
+      if (docSnap.exists) {
+        return new User({ id: docSnap.id, ...docSnap.data() } as IUserData);
+      }
+    } catch (error) {
+      logger.debug("Document not found by direct ID lookup:", error);
+      // Continue with field searches
+    }
+    
+    // Try by userId with both string and number values
+    const userIdQuery = await db.collection("users")
+      .where("userId", "in", [telegramIdStr, telegramIdNum])
       .limit(1)
       .get();
     
-    if (!snap.empty) {
-      return new User(snap.docs[0].data() as IUserData);
+    if (!userIdQuery.empty) {
+      const doc = userIdQuery.docs[0];
+      return new User({ id: doc.id, ...doc.data() } as IUserData);
     }
 
-    // Try by chatId
-    snap = await db
-      .collection("users")
-      .where("chatId", "==", telegramIdStr)
+    // Try by chatId with both string and number values
+    const chatIdQuery = await db.collection("users")
+      .where("chatId", "in", [telegramIdStr, telegramIdNum])
       .limit(1)
       .get();
     
-    if (!snap.empty) {
-      return new User(snap.docs[0].data() as IUserData);
+    if (!chatIdQuery.empty) {
+      const doc = chatIdQuery.docs[0];
+      return new User({ id: doc.id, ...doc.data() } as IUserData);
     }
 
+    logger.info(`No user found with telegramId: ${telegramId}`);
     return null;
   } catch (error) {
     logger.error("Error in findByTelegramId:", error);
