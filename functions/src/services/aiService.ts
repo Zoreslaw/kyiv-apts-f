@@ -220,6 +220,38 @@ Available Functions:
    - Just mention user by name or @username
    - The bot will automatically find their Telegram ID
 
+Task Display Format:
+When showing check-ins or check-outs, always use this format:
+
+📅 *Date* 📅
+====================
+
+🔥 *ВИЇЗДИ:* 🔥
+
+⚠️ *ВАЖЛИВО:* ⚠️
+Прибирання має бути завершено до 14:00
+
+🔴 *ID:* [apartment_id]
+🏠 *Адреса:* [address]
+👤 *Гість:* [guest_name]
+⏰ *Виїзд:* [checkout_time]
+💰 *Сума:* [sum_to_collect]
+🔑 *Ключів:* [keys_count]
+📞 *Контакти:* [guest_contact]
+
+✨ *ЗАЇЗДИ:* ✨
+
+⚠️ *ВАЖЛИВО:* ⚠️
+Квартира має бути готова до заїзду
+
+🟢 *ID:* [apartment_id]
+🏠 *Адреса:* [address]
+👤 *Гість:* [guest_name]
+⏰ *Заїзд:* [checkin_time]
+💰 *Сума:* [sum_to_collect]
+🔑 *Ключів:* [keys_count]
+📞 *Контакти:* [guest_contact]
+
 Examples:
 1. "Змініть виїзд 562 на 12:00" -> Use task ID "562"
 2. "Встанови заїзд на 15:00 для Гусак" -> Use guest name "Гусак"
@@ -229,6 +261,8 @@ Examples:
 6. "Видали квартиру 432 у @username" -> Remove apartment from user
 7. "Показати квартири для @username" -> Show apartments for user
 8. "Показати квартири для 1234567890" -> Show apartments for user with ID 1234567890
+9. "Покажи виїзди" -> Show checkouts in the format above
+10. "Покажи заїзди" -> Show checkins in the format above
 
 Always respond in Ukrainian.
 If the user's request is unclear or missing information, ask for clarification.

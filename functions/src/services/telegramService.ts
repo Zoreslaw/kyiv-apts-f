@@ -89,8 +89,8 @@ export class TelegramService {
       logger.info(`[handleStart] Sending welcome message`);
       await this.sendMessage(
         chatId,
-        `Вітаю, ${firstName || 'користувачу'}! Я бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
-        undefined,
+        `*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
+        "Markdown",
         mainMenuKeyboard
       );
     } catch (error) {
@@ -98,8 +98,8 @@ export class TelegramService {
       // Send welcome message even if there's an error
       await this.sendMessage(
         chatId,
-        `Вітаю, ${firstName || 'користувачу'}! Я бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
-        undefined,
+        `*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
+        "Markdown",
         mainMenuKeyboard
       );
     }
@@ -212,7 +212,7 @@ export class TelegramService {
 
   async handleMenuCommand(chatId: string | number): Promise<void> {
     const chatIdStr = String(chatId);
-    await this.sendMessage(chatIdStr, "Оберіть опцію з меню:", undefined, mainMenuKeyboard);
+    await this.sendMessage(chatIdStr, "*Оберіть опцію з меню:*", "Markdown", mainMenuKeyboard);
   }
 
   async handleHelpCommand(chatId: string | number): Promise<void> {
@@ -271,7 +271,7 @@ export class TelegramService {
     // Get user's role and assigned apartments
     const user = await findByTelegramId(userId);
     if (!user) {
-      await this.sendMessage(chatId, "Користувача не знайдено. Будь ласка, зареєструйтесь.");
+      await this.sendMessage(chatId, "*Користувача не знайдено.*\nБудь ласка, зареєструйтесь.", "Markdown");
       return;
     }
 
@@ -290,7 +290,7 @@ export class TelegramService {
     });
 
     if (result.type === 'text') {
-      await this.sendMessage(String(chatId), result.content || "Операція успішно виконана.");
+      await this.sendMessage(String(chatId), result.content || "*Операція успішно виконана.*", "Markdown");
     } else if (result.type === 'function_call' && result.function_call) {
 
       const functionResult = await this.functionService.executeFunction(
@@ -308,7 +308,7 @@ export class TelegramService {
         functionResult
       );
       
-      await this.sendMessage(String(chatId), followUp.content);
+      await this.sendMessage(String(chatId), followUp.content, "Markdown");
     }
   }
 
@@ -346,8 +346,8 @@ export class TelegramService {
       logger.info(`[handleStartCommand] Sending welcome message`);
       await this.sendMessage(
         chatIdStr,
-        `Вітаю, ${firstName || 'користувачу'}! Я бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
-        undefined,
+        `*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
+        "Markdown",
         mainMenuKeyboard
       );
     } catch (error) {
@@ -355,8 +355,8 @@ export class TelegramService {
       // Send welcome message even if there's an error
       await this.sendMessage(
         chatIdStr,
-        `Вітаю, ${firstName || 'користувачу'}! Я бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
-        undefined,
+        `*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
+        "Markdown",
         mainMenuKeyboard
       );
     }

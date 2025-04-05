@@ -3,11 +3,11 @@ import { ITaskData, Task } from "../models/Task";
 import { db } from "../config/firebase";
 import { logger } from "firebase-functions";
 import { getKievDateRange, getTimestamp } from "../utils/dateTime";
-import { findByUserId } from "./cleaningAssignmentRepository";
 import { TaskTypes } from "../utils/constants";
 import { Timestamp } from "firebase-admin/firestore";
 import { findByTelegramId } from "./userRepository";
 import { UserRoles } from "../utils/constants";
+import { findByUserId as findCleaningAssignmentByUserId } from "./cleaningAssignmentRepository";
 
 const TASKS_COLLECTION = "tasks";
 
@@ -23,11 +23,32 @@ async function findTasksByUserId(userId: string): Promise<Task[]> {
   const { start: startTimestamp, end: endTimestamp } = getKievDateRange(0, 7);
   logger.info(`Searching for tasks between ${startTimestamp.toDate()} and ${endTimestamp.toDate()}`);
 
-  let query = db.collection(TASKS_COLLECTION);
-  const querySnapshot = await query.get();
-  logger.info(`Found ${querySnapshot.size} total tasks`);
+  const cleaningAssignment = await findCleaningAssignmentByUserId(userId);
+  const assignedApartmentIds = cleaningAssignment?.apartmentIds || [];
+  logger.info(`User ${userId} has ${assignedApartmentIds.length} assigned apartments: ${assignedApartmentIds.join(', ')}`);
 
-  const tasks = querySnapshot.docs.map(doc => {
+  let snap;
+  if (user.role === UserRoles.ADMIN) {
+    // For admins, get all tasks without filtering by apartment
+    logger.info(`User ${userId} is admin, fetching all tasks`);
+    snap = await db
+      .collection(TASKS_COLLECTION)
+      .where("dueDate", ">=", startTimestamp)
+      .where("dueDate", "<=", endTimestamp)
+      .get();
+  } else {
+    // For regular users, only get tasks for their assigned apartments
+    snap = await db
+      .collection(TASKS_COLLECTION)
+      .where("apartmentId", "in", assignedApartmentIds)
+      .where("dueDate", ">=", startTimestamp)
+      .where("dueDate", "<=", endTimestamp)
+      .get();
+  }
+
+  logger.info(`Found ${snap.size} total tasks`);
+
+  const tasks = snap.docs.map(doc => {
     const data = doc.data();
     let dueDate: Timestamp;
     
@@ -57,27 +78,8 @@ async function findTasksByUserId(userId: string): Promise<Task[]> {
     } as ITaskData);
   });
 
-  // Filter tasks by date range
-  const dateFilteredTasks = tasks.filter(task => {
-    const taskDate = task.dueDate;
-    return taskDate >= startTimestamp && taskDate <= endTimestamp;
-  });
-  logger.info(`Found ${dateFilteredTasks.length} tasks in date range`);
-
-  if (user.role === UserRoles.ADMIN) {
-    logger.info(`User ${userId} is admin, returning all ${dateFilteredTasks.length} tasks`);
-    return dateFilteredTasks;
-  }
-
-  // Get user's assigned apartments from cleaningAssignments collection
-  const cleaningAssignment = await findByUserId(userId);
-  const assignedApartmentIds = cleaningAssignment?.apartmentIds || [];
-  logger.info(`User ${userId} has ${assignedApartmentIds.length} assigned apartments: ${assignedApartmentIds.join(', ')}`);
-
-  const filteredTasks = dateFilteredTasks.filter(task => assignedApartmentIds.includes(task.apartmentId));
-  logger.info(`Found ${filteredTasks.length} tasks for user's assigned apartments`);
-
-  return filteredTasks;
+  logger.info(`Returning ${tasks.length} tasks for user ${userId}`);
+  return tasks;
 }
 
 export async function updateTaskTime(
@@ -146,7 +148,7 @@ async function updateTaskInfo(
 
     // Check if user has permission to modify this task
     const taskData = doc.data();
-    const userAssignment = await findByUserId(userId);
+    const userAssignment = await findCleaningAssignmentByUserId(userId);
     const assignedApartments = userAssignment?.apartmentIds || [];
 
     // Get user's role

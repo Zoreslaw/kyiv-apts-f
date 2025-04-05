@@ -89,21 +89,7 @@ export class TaskService {
       const tasks = await findTasksByUserId(chatIdStr);
       logger.info(`[TaskService] Found ${tasks.length} tasks for user ${chatIdStr}`);
 
-      // Use getKievDateRange for date filtering
-      const { start, end } = getKievDateRange(0, 7);
-      
-      const upcomingTasks = tasks.filter((task: Task) => {
-        const taskDate = task.dueDate instanceof Timestamp ? 
-          task.dueDate : 
-          task.dueDate instanceof Date ? 
-            Timestamp.fromDate(task.dueDate) : 
-            Timestamp.fromDate(new Date(task.dueDate));
-        return taskDate >= start && taskDate <= end;
-      });
-
-      logger.info(`[TaskService] Filtered to ${upcomingTasks.length} upcoming tasks`);
-
-      if (upcomingTasks.length === 0) {
+      if (tasks.length === 0) {
         logger.info(`[TaskService] No upcoming tasks found for user ${chatIdStr}`);
         return {
           success: false,
@@ -111,10 +97,10 @@ export class TaskService {
         };
       }
 
-      logger.info(`[TaskService] Successfully retrieved ${upcomingTasks.length} tasks for user ${chatIdStr}`);
+      logger.info(`[TaskService] Successfully retrieved ${tasks.length} tasks for user ${chatIdStr}`);
       return {
         success: true,
-        tasks: upcomingTasks
+        tasks: tasks
       };
     } catch (err) {
       logger.error("[TaskService] Error in getTasksForUser:", err);
