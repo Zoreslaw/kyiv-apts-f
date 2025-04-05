@@ -126,8 +126,8 @@ export class TelegramService {
       if (!result.tasks) {
         logger.info(`[TelegramService] No tasks returned for chatId=${chatIdStr}`);
         await this.sendMessage(chatIdStr, "Немає завдань на найближчі дні.");
-    return;
-  }
+        return;
+      }
 
       // Group tasks by date
       const grouped = this.taskService.groupTasksByDate(result.tasks);
@@ -139,8 +139,8 @@ export class TelegramService {
       if (allDates.length === 0) {
         logger.info(`[TelegramService] No dates with tasks found for chatId=${chatIdStr}`);
         await this.sendMessage(chatIdStr, "Немає завдань на найближчі дні.");
-    return;
-  }
+        return;
+      }
 
       // Send tasks for each date, splitting long messages
       for (const date of allDates) {

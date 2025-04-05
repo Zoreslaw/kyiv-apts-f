@@ -1,20 +1,14 @@
 import axios from "axios";
-import * as functions from "firebase-functions";
 import { Timestamp } from "firebase-admin/firestore";
 import { findById, createReservation } from "../repositories/reservationRepository";
 import { findById as findTaskById, updateTask, createTask } from "../repositories/taskRepository";
-import { findAllApartments, findApartmentById } from "../repositories/apartmentRepository";
-import { getKievDate } from "../utils/dateTime";
+import { findAllApartments } from "../repositories/apartmentRepository";
 import { TaskTypes, TaskStatuses, DEFAULT_CHECKIN_TIME, DEFAULT_CHECKOUT_TIME } from "../utils/constants";
 import { Apartment, IApartmentData } from "../models/Apartment";
 import { ITaskData, Task } from "../models/Task";
 import { IReservationData, Reservation } from "../models/Reservation";
 import { logger } from "firebase-functions";
-
-const TASKS_COLLECTION = "tasks";
-
-// Placeholder for CMS API base URL - move to config/env
-const CMS_API_BASE = "https://kievapts.com/api/1.1/json";
+import { CMS_API_BASE, CMS_ENDPOINTS } from "../config/cmsApi";
 
 interface CmsData {
   reservation_id?: string;
@@ -44,29 +38,21 @@ export async function fetchFromCMS(endpoint: string): Promise<Record<string, Cms
     return {};
   } catch (error) {
     logger.error(`[fetchFromCMS] Error fetching from CMS endpoint ${endpoint}:`, error);
-    throw error; // Re-throw the error to be handled by the caller
+    throw error;
   }
 }
 
-// The main sync logic - to be called by the scheduled trigger
 export async function syncReservationsAndTasks(): Promise<void> {
   logger.info("[syncReservationsAndTasks] Starting sync process");
 
   try {
-    // --- 1. Fetch data from CMS --- //
-    // Fetch for a relevant period (e.g., yesterday, today, next few days)
-    const today = getKievDate(0);
-    // Add relevant dates - adjust range as needed
-    const datesToFetch = [getKievDate(-1), today, getKievDate(1), getKievDate(2)];
-    logger.info(`[syncReservationsAndTasks] Fetching data for dates: ${datesToFetch.join(', ')}`);
-
     // Fetch checkouts and checkins
     logger.info("[syncReservationsAndTasks] Fetching checkouts from CMS...");
-    const checkoutsResponse = await fetchFromCMS("checkouts");
+    const checkoutsResponse = await fetchFromCMS(CMS_ENDPOINTS.checkouts);
     logger.info(`[syncReservationsAndTasks] Found checkouts for ${Object.keys(checkoutsResponse).length} dates`);
 
     logger.info("[syncReservationsAndTasks] Fetching checkins from CMS...");
-    const checkinsResponse = await fetchFromCMS("checkins");
+    const checkinsResponse = await fetchFromCMS(CMS_ENDPOINTS.checkins);
     logger.info(`[syncReservationsAndTasks] Found checkins for ${Object.keys(checkinsResponse).length} dates`);
 
     // --- 2. Process and Upsert Reservations & Tasks --- //
@@ -94,7 +80,7 @@ export async function syncReservationsAndTasks(): Promise<void> {
       // Process checkouts
       for (const cmsCheckout of checkouts) {
         try {
-          const reservationData = mapCmsToReservation(cmsCheckout, date, "checkout");
+          const reservationData = mapCmsToReservation(cmsCheckout, date, TaskTypes.CHECK_OUT);
           const apartment = apartmentMap.get(String(reservationData.apartmentId));
 
           // Upsert Reservation
@@ -126,7 +112,7 @@ export async function syncReservationsAndTasks(): Promise<void> {
       // Process checkins
       for (const cmsCheckin of checkins) {
         try {
-          const reservationData = mapCmsToReservation(cmsCheckin, date, "checkin");
+          const reservationData = mapCmsToReservation(cmsCheckin, date, TaskTypes.CHECK_IN);
           const apartment = apartmentMap.get(String(reservationData.apartmentId));
 
           // Upsert Reservation
@@ -181,9 +167,9 @@ function mapCmsToReservation(cmsData: CmsData, date: string, type: string): Part
     };
 
     // Set the appropriate date field
-    if (type === "checkin") {
+    if (type === TaskTypes.CHECK_IN) {
       reservation.checkinDate = date;
-    } else if (type === "checkout") {
+    } else if (type === TaskTypes.CHECK_OUT) {
       reservation.checkoutDate = date;
     }
 
