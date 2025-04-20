@@ -128,9 +128,9 @@ export async function findByTelegramId(telegramId: string): Promise<User | null>
       .limit(1)
       .get();
 
-    if (snapshot.empty) return null;
+    if (chatIdQuery.empty) return null;
     
-    const doc = snapshot.docs[0];
+    const doc = chatIdQuery.docs[0];
     return new User({
       id: doc.id,
       ...doc.data() as Omit<IUserData, 'id'>
