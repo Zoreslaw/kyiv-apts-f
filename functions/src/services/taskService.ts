@@ -1,7 +1,7 @@
 import { Timestamp } from "firebase-admin/firestore";
 import { findTasksByUserId, updateTask, findByApartmentId } from "../repositories/taskRepository";
 import { Task, ITaskData } from "../models/Task";
-import { TaskStatuses, TaskTypes } from "../utils/constants";
+import { TaskStatus, TaskTypes } from "../utils/constants";
 import { logger } from "firebase-functions";
 import { findOrCreateUser } from "./userService";
 import { getKievDateRange, toKievDate, formatKievDate } from "../utils/dateTime";
@@ -10,7 +10,7 @@ async function getTasksForUser(userId: string): Promise<Task[]> {
   return findTasksByUserId(userId);
 }
 
-async function updateTaskStatus(taskId: string, status: TaskStatuses, userId: string): Promise<Task | null> {
+async function updateTaskStatus(taskId: string, status: TaskStatus, userId: string): Promise<Task | null> {
   return updateTask(taskId, { 
     status, 
     updatedAt: Timestamp.now(), 
@@ -30,9 +30,9 @@ export class TaskService {
         grouped[date] = { checkouts: [], checkins: [] };
       }
       
-      if (task.type === TaskTypes.CHECK_OUT) {
+      if (task.type === TaskTypes.CHECKOUT) {
         grouped[date].checkouts.push(task);
-      } else if (task.type === TaskTypes.CHECK_IN) {
+      } else if (task.type === TaskTypes.CHECKIN) {
         grouped[date].checkins.push(task);
       }
     });

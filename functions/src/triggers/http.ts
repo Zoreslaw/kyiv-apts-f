@@ -18,6 +18,14 @@ export const telegramWebhook = onRequest(async (req, res) => {
     const update = req.body;
     logger.info("Received Telegram update:", update);
 
+    // Handle callback queries (button clicks)
+    if (update.callback_query) {
+      await telegramService.handleCallbackQuery(update.callback_query);
+      res.status(200).send({ success: true });
+      return;
+    }
+
+    // Handle regular messages
     if (!update.message?.text) {
       res.status(200).send({ success: true });
       return;
@@ -39,38 +47,9 @@ export const telegramWebhook = onRequest(async (req, res) => {
       return;
     }
 
-    // Handle basic commands
-    switch (text) {
-      case "/menu":
-      case "⚙️ Меню":
-        await telegramService.handleMenuCommand(chatId);
-        res.status(200).send({ success: true });
-        return;
-
-      case "/help":
-      case "❓ Допомога":
-        await telegramService.handleHelpCommand(chatId);
-        res.status(200).send({ success: true });
-        return;
-
-      case "/about":
-      case "ℹ️ Про бота":
-        await telegramService.handleAboutCommand(chatId);
-        res.status(200).send({ success: true });
-        return;
-
-      case "/get_my_tasks":
-      case "📋 Мої завдання":
-        await telegramService.handleGetMyTasks(chatId);
-        res.status(200).send({ success: true });
-        return;
-
-      default:
-        // Handle AI-powered message processing
-        await telegramService.handleMessage(update.message);
-        res.status(200).send({ success: true });
-        return;
-    }
+    // Handle all other messages
+    await telegramService.handleMessage(update.message);
+    res.status(200).send({ success: true });
   } catch (error) {
     logger.error("Error in telegramWebhook trigger:", error);
     // Always return 200 to prevent Telegram from retrying

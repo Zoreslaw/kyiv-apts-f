@@ -1,9 +1,11 @@
 // Service for managing user data and permissions
 import { Timestamp } from "firebase-admin/firestore";
 import { findByTelegramId, createUser, updateUser } from "../repositories/userRepository";
-import { User, IUserData } from "../models/User";
 import { UserRoles } from "../utils/constants";
 import { logger } from "firebase-functions/v2";
+
+// Import User types from repository, not model
+import type { User, IUserData } from "../repositories/userRepository";
 
 interface TelegramUser {
   id: string | number;
@@ -18,7 +20,7 @@ async function isUserRegistered(telegramId: string | number): Promise<boolean> {
   return user !== null;
 }
 
-async function findOrCreateUser(telegramUser: TelegramUser): Promise<User> {
+async function findOrCreateUser(telegramUser: TelegramUser): Promise<User | null> {
   const { id, first_name, last_name, username } = telegramUser;
   const idStr = String(id);
 
@@ -27,7 +29,7 @@ async function findOrCreateUser(telegramUser: TelegramUser): Promise<User> {
   let user = await findByTelegramId(idStr);
   if (!user) {
     logger.log(`Creating new user: ${first_name} (ID=${idStr})`);
-    const newUser: Omit<IUserData, 'id'> = {
+    const newUser = {
       telegramId: idStr,
       chatId: idStr,
       firstName: first_name || "",
@@ -36,10 +38,10 @@ async function findOrCreateUser(telegramUser: TelegramUser): Promise<User> {
       role: UserRoles.CLEANER, // Default role
       status: "active",
       assignedApartmentIds: [],
-      createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
+      createdAt: Timestamp.now().toDate(),
+      updatedAt: Timestamp.now().toDate(),
     };
-    user = await createUser(newUser);
+    user = await createUser(newUser as IUserData);
   }
   return user;
 }
@@ -48,8 +50,12 @@ async function updateUserChatId(telegramId: string | number, chatId: string | nu
   const telegramIdStr = String(telegramId);
   const chatIdStr = String(chatId);
   const user = await findByTelegramId(telegramIdStr);
-  if (user && user.chatId !== chatIdStr) {
-    return updateUser(user.id, { chatId: chatIdStr, updatedAt: Timestamp.now() });
+  
+  if (user && user.id && user.chatId !== chatIdStr) {
+    return updateUser(user.id, { 
+      chatId: chatIdStr, 
+      updatedAt: Timestamp.now().toDate() 
+    });
   }
   return user;
 }
@@ -59,13 +65,13 @@ interface UserWithPermissions {
   telegramId: string;
   chatId: string | null;
   firstName: string;
-  lastName: string | null;
-  username: string | null;
-  role: UserRoles;
+  lastName: string;
+  username: string;
+  role: string;
   status: string;
   assignedApartmentIds: string[];
-  createdAt: Timestamp | Date;
-  updatedAt: Timestamp | Date;
+  createdAt: Date;
+  updatedAt: Date;
   isAdmin: boolean;
   isManager: boolean;
   isCleaner: boolean;
@@ -78,20 +84,20 @@ async function getUserWithPermissions(telegramId: string | number): Promise<User
   
   // Converting User class to UserWithPermissions
   return {
-    id: user.id,
+    id: user.id || '',
     telegramId: user.telegramId,
     chatId: user.chatId,
     firstName: user.firstName,
-    lastName: user.lastName,
-    username: user.username,
+    lastName: user.lastName || '',
+    username: user.username || '',
     role: user.role,
     status: user.status,
-    assignedApartmentIds: user.assignedApartmentIds,
-    createdAt: user.createdAt,
-    updatedAt: user.updatedAt,
-    isAdmin: user.isAdmin(),
-    isManager: user.isManager(),
-    isCleaner: user.isCleaner(),
+    assignedApartmentIds: user.assignedApartmentIds || [],
+    createdAt: user.createdAt || new Date(),
+    updatedAt: user.updatedAt || new Date(),
+    isAdmin: user.role === UserRoles.ADMIN,
+    isManager: user.role === UserRoles.ADMIN, // Assuming admin is also manager
+    isCleaner: user.role === UserRoles.CLEANER,
   };
 }
 

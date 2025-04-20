@@ -2,316 +2,275 @@ import axios from "axios";
 import { logger } from "firebase-functions";
 import { defineString } from "firebase-functions/params";
 import { AIService } from "./aiService";
-import { getTasksForUser, TaskService } from "./taskService";
+import { TaskService } from "./taskService";
 import { findOrCreateUser } from "./userService";
 import { FunctionExecutionService } from "./functionExecutionService";
 import { syncReservationsAndTasks } from "./syncService";
 import { findByTelegramId } from "../repositories/userRepository";
 import { findByUserId } from "../repositories/cleaningAssignmentRepository";
 import { UserRoles } from "../utils/constants";
+import { KeyboardService, TelegramContext } from "./keyboardService";
+import { KEYBOARDS } from "../constants/keyboards";
+import { updateUser } from "../repositories/userRepository";
+import { Timestamp } from "firebase-admin/firestore";
 
 // Types
 interface TelegramMessage {
   chat: { id: string | number };
   from: { id: string | number; first_name?: string; last_name?: string; username?: string };
   text?: string;
+  callback_query?: {
+    data: string;
+    message: {
+      message_id: number;
+    };
+  };
+}
+
+interface TelegramResponse {
+  ok: boolean;
+  result: {
+    message_id: number;
+    chat: { id: number };
+    text: string;
+  };
 }
 
 // Constants
 const botToken = defineString("TELEGRAM_BOT_TOKEN");
 const TELEGRAM_API = `https://api.telegram.org/bot${botToken.value()}`;
 
-const mainMenuKeyboard = {
-  keyboard: [
-    [{ text: "📋 Мої завдання" }, { text: "⚙️ Меню" }],
-    [{ text: "❓ Допомога" }, { text: "ℹ️ Про бота" }],
-  ],
-  resize_keyboard: true,
-};
-
 export class TelegramService {
   private aiService: AIService;
   private taskService: TaskService;
   private functionService: FunctionExecutionService;
+  private keyboardService: KeyboardService;
 
-  constructor(openaiApiKey: string) {
+  constructor(openaiApiKey?: string) {
     this.aiService = new AIService();
     this.taskService = new TaskService();
     this.functionService = new FunctionExecutionService();
+    this.keyboardService = new KeyboardService(this.taskService, this);
   }
 
-  private async sendMessage(chatId: string | number, text: string, parseMode?: string, replyMarkup?: any): Promise<void> {
+  public async sendMessage(
+    chatId: string | number,
+    text: string,
+    parseMode?: string,
+    replyMarkup?: any
+  ): Promise<{ message_id: number }> {
     const chatIdStr = String(chatId);
-    await axios.post(`${TELEGRAM_API}/sendMessage`, {
-      chat_id: chatIdStr,
-      text,
-      parse_mode: parseMode,
-      reply_markup: replyMarkup,
-    });
-  }
-
-  async handleStart(message: TelegramMessage): Promise<void> {
-    const { chat, from } = message;
-    const { id: userId, first_name: firstName, last_name: lastName, username } = from;
-
-    // Convert IDs to strings at the earliest point
-    const chatId = String(chat.id);
-    const userIdStr = String(userId);
-
-    logger.info(`[handleStart] Starting process for user: ${firstName} (ID=${userIdStr})`);
-
     try {
-      // Check if user exists
-      logger.info(`[handleStart] Checking/creating user in database`);
-      await findOrCreateUser({
-        id: userIdStr,
-        first_name: firstName,
-        last_name: lastName,
-        username: username
+      const response = await axios.post<TelegramResponse>(`${TELEGRAM_API}/sendMessage`, {
+        chat_id: chatIdStr,
+        text,
+        parse_mode: parseMode,
+        reply_markup: replyMarkup,
       });
-
-      // Sync database before sending welcome message
-      logger.info(`[handleStart] Starting database sync`);
-      await this.sendMessage(chatId, "🔄 Синхронізую дані з базою... Це може зайняти кілька секунд.");
-      
-      try {
-        logger.info(`[handleStart] Calling syncReservationsAndTasks`);
-        await syncReservationsAndTasks();
-        logger.info(`[handleStart] Sync completed successfully`);
-        await this.sendMessage(chatId, "✅ Синхронізація успішно завершена!");
-      } catch (syncError) {
-        logger.error(`[handleStart] Error during sync:`, syncError);
-        await this.sendMessage(chatId, "⚠️ Помилка при синхронізації даних. Спробуйте пізніше.");
-        // Continue with welcome message even if sync fails
-      }
-
-      // Send welcome message
-      logger.info(`[handleStart] Sending welcome message`);
-      await this.sendMessage(
-        chatId,
-        `*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
-        "Markdown",
-        mainMenuKeyboard
-      );
+      return { message_id: response.data.result.message_id };
     } catch (error) {
-      logger.error(`[handleStart] Critical error:`, error);
-      // Send welcome message even if there's an error
-      await this.sendMessage(
-        chatId,
-        `*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
-        "Markdown",
-        mainMenuKeyboard
-      );
+      logger.error(`Error sending message to chat ${chatIdStr}:`, error);
+      throw error;
     }
   }
 
-  async handleGetMyTasks(chatId: string | number): Promise<void> {
-    try {
-      const chatIdStr = String(chatId);
-      logger.info(`[TelegramService] Starting handleGetMyTasks for chatId=${chatIdStr}`);
-      
-      const result = await this.taskService.getTasksForUser(chatIdStr);
-      logger.info(`[TelegramService] TaskService result:`, {
-        success: result.success,
-        hasMessage: !!result.message,
-        tasksCount: result.tasks?.length || 0
-      });
-      
-      if (!result.success) {
-        logger.warn(`[TelegramService] TaskService returned error: ${result.message}`);
-        await this.sendMessage(chatIdStr, result.message || "Помилка при отриманні завдань.");
-        return;
-      }
-
-      if (!result.tasks) {
-        logger.info(`[TelegramService] No tasks returned for chatId=${chatIdStr}`);
-        await this.sendMessage(chatIdStr, "Немає завдань на найближчі дні.");
-        return;
-      }
-
-      // Group tasks by date
-      const grouped = this.taskService.groupTasksByDate(result.tasks);
-      logger.info(`[TelegramService] Grouped tasks into ${Object.keys(grouped).length} dates`);
-      
-      const allDates = Object.keys(grouped).sort();
-      logger.info(`[TelegramService] Sorted dates: ${allDates.join(', ')}`);
-
-      if (allDates.length === 0) {
-        logger.info(`[TelegramService] No dates with tasks found for chatId=${chatIdStr}`);
-        await this.sendMessage(chatIdStr, "Немає завдань на найближчі дні.");
-        return;
-      }
-
-      // Send tasks for each date, splitting long messages
-      for (const date of allDates) {
-        const { checkouts, checkins } = grouped[date];
-        logger.info(`[TelegramService] Processing date ${date}: ${checkouts.length} checkouts, ${checkins.length} checkins`);
-        
-        if (!checkouts.length && !checkins.length) {
-          logger.info(`[TelegramService] Skipping empty date ${date}`);
-          continue;
-        }
-
-        const [y, m, d] = date.split("-");
-        const dateString = `${d}.${m}.${y}`;
-        let msg = this.taskService.formatTasksMessage(dateString, checkouts, checkins);
-        
-        // Split message if it's too long
-        if (msg.length > 4000) { // Using 4000 as a safe limit
-          const parts = this.splitMessage(msg);
-          for (const part of parts) {
-            logger.info(`[TelegramService] Sending part of message for date ${dateString}`);
-            await this.sendMessage(chatIdStr, part, "Markdown");
+  /**
+   * Create a TelegramContext object for a specific user
+   */
+  private createContext(chatId: string | number, userId: string | number): TelegramContext {
+    return {
+      chatId,
+      userId,
+      reply: async (text: string, options?: any) => {
+        // Handle message deletion option
+        if (options?.delete_message_id) {
+          try {
+            await axios.post(`${TELEGRAM_API}/deleteMessage`, {
+              chat_id: chatId,
+              message_id: options.delete_message_id
+            });
+            return { message_id: 0 }; // Return dummy message ID for deleted messages
+          } catch (error) {
+            logger.warn(`Failed to delete message ${options.delete_message_id}:`, error);
           }
-        } else {
-          logger.info(`[TelegramService] Sending message for date ${dateString}`);
-          await this.sendMessage(chatIdStr, msg, "Markdown");
         }
+        
+        return this.sendMessage(
+          chatId, 
+          text, 
+          options?.parse_mode, 
+          options?.reply_markup
+        );
       }
-      
-      logger.info(`[TelegramService] Successfully completed handleGetMyTasks for chatId=${chatIdStr}`);
-    } catch (err) {
-      logger.error("[TelegramService] Error in handleGetMyTasks:", err);
-      logger.error("[TelegramService] Error details:", {
-        chatId,
-        error: err instanceof Error ? err.message : 'Unknown error',
-        stack: err instanceof Error ? err.stack : undefined
-      });
-      await this.sendMessage(String(chatId), "Помилка при отриманні завдань. Спробуйте пізніше.");
-    }
+    };
   }
 
-  // Helper method to split long messages
-  private splitMessage(message: string): string[] {
-    const MAX_LENGTH = 4000; // Safe limit for Telegram messages
-    const parts: string[] = [];
-    
-    if (message.length <= MAX_LENGTH) {
-      return [message];
-    }
-
-    // Split by newlines to preserve message structure
-    const lines = message.split('\n');
-    let currentPart = '';
-    
-    for (const line of lines) {
-      if (currentPart.length + line.length + 1 > MAX_LENGTH) {
-        parts.push(currentPart.trim());
-        currentPart = line;
-      } else {
-        currentPart += (currentPart ? '\n' : '') + line;
-      }
-    }
-    
-    if (currentPart) {
-      parts.push(currentPart.trim());
-    }
-    
-    return parts;
-  }
-
-  async handleMenuCommand(chatId: string | number): Promise<void> {
-    const chatIdStr = String(chatId);
-    await this.sendMessage(chatIdStr, "*Оберіть опцію з меню:*", "Markdown", mainMenuKeyboard);
-  }
-
-  async handleHelpCommand(chatId: string | number): Promise<void> {
-    const chatIdStr = String(chatId);
-    const text = `🤖 *Доступні команди:*
-
-      📋 *Мої завдання* - переглянути список завдань (старий метод, без AI)
-      ⚙️ *Меню* - відкрити головне меню
-      ❓ *Допомога* - показати це повідомлення
-      ℹ️ *Про бота* - інформація про бота
-
-      Приклади оновлень через AI:
-      - "Змініть виїзд 598 на 11:00"
-      - "Встанови заїзд на 15:00"
-      - "Постав суму 300 для квартири 598"
-      - "Постав 2 ключі для квартири 598"`;
-    await this.sendMessage(chatIdStr, text, "Markdown");
-  }
-
-  async handleAboutCommand(chatId: string | number): Promise<void> {
-    const chatIdStr = String(chatId);
-    const text = `🤖 *Бот для управління завданнями*
-
-      Цей бот показує завдання старим способом і оновлює час/суму/ключі через AI.
-
-      Поля у бронюваннях:
-      • Сума (sumToCollect)
-      • Ключі (keysCount)`;
-    await this.sendMessage(chatIdStr, text, "Markdown");
-  }
-
+  /**
+   * Handle incoming messages from users
+   */
   async handleMessage(message: TelegramMessage): Promise<void> {
     const { chat, text, from } = message;
-    const chatId = chat.id;
-    const userId = from.id;
+    const chatId = String(chat.id);
+    const userId = String(from.id);
 
     if (!text) {
       await this.sendMessage(chatId, "Будь ласка, надішліть текстове повідомлення.");
       return;
     }
 
-    // Handle basic commands
-    if (text.startsWith('/')) {
-      switch (text) {
-        case '/menu':
-        case '/help':
-        case '/about':
-          await this.handleGetMyTasks(chatId);
-          return;
-        case '/get_my_tasks':
-          await this.handleGetMyTasks(chatId);
-          return;
-      }
-    }
-
-    // Get user's role and assigned apartments
     const user = await findByTelegramId(userId);
-    if (!user) {
-      await this.sendMessage(chatId, "*Користувача не знайдено.*\nБудь ласка, зареєструйтесь.", "Markdown");
+    const isAdmin = user?.role === UserRoles.ADMIN;
+    const ctx = this.createContext(chatId, userId);
+
+    // Check if we're in an apartment editing mode and try to process the text input
+    const isEditingApartment = await this.keyboardService.processApartmentEdit(ctx, text);
+    if (isEditingApartment) {
       return;
     }
 
-    const isAdmin = user.role === UserRoles.ADMIN;
-    const assignment = await findByUserId(String(userId));
-    const assignedApartments = assignment?.apartmentIds || [];
-    const currentTasks = (await this.taskService.getTasksForUser(String(userId))).tasks || [];
+    // Handle as keyboard action first (standard commands)
+    switch (text) {
+      case "/menu":
+      case "⚙️ Меню":
+        await this.keyboardService.handleAction(ctx, 'show_menu');
+        return;
 
-    // Process message with AI
+      case "/help":
+      case "❓ Допомога":
+        await this.keyboardService.handleAction(ctx, 'help');
+        return;
+
+      case "/about":
+      case "ℹ️ Про бота":
+        await this.keyboardService.handleAction(ctx, 'about');
+        return;
+
+      case "/get_my_tasks":
+      case "📋 Мої завдання":
+        await this.keyboardService.handleAction(ctx, 'show_tasks');
+        return;
+        
+      case "/admin":
+      case "👨‍💼 Адмін панель":
+        if (isAdmin) {
+          await this.keyboardService.handleAction(ctx, 'admin_panel');
+        } else {
+          await ctx.reply("У вас немає доступу до адмін-панелі.");
+        }
+        return;
+        
+      // Admin menu button handlers
+      case "Змінити заїзди":
+        if (isAdmin) {
+          await this.keyboardService.handleAction(ctx, 'edit_checkins');
+        } else {
+          await ctx.reply("У вас немає доступу до цієї функції.");
+        }
+        return;
+        
+      case "Змінити виїзди":
+        if (isAdmin) {
+          await this.keyboardService.handleAction(ctx, 'edit_checkouts');
+        } else {
+          await ctx.reply("У вас немає доступу до цієї функції.");
+        }
+        return;
+        
+      case "Користувачі":
+        if (isAdmin) {
+          await this.keyboardService.handleAction(ctx, 'manage_users');
+        } else {
+          await ctx.reply("У вас немає доступу до цієї функції.");
+        }
+        return;
+        
+      case "Квартири":
+        if (isAdmin) {
+          await this.keyboardService.handleAction(ctx, 'manage_apartments');
+        } else {
+          await ctx.reply("У вас немає доступу до цієї функції.");
+        }
+        return;
+        
+      case "Головне меню":
+        await this.keyboardService.handleAction(ctx, 'back_to_main');
+        return;
+        
+      case "/admin":
+      case "👨‍💼 Адмін панель":
+        if (isAdmin) {
+          await this.keyboardService.handleAction(ctx, 'admin_panel');
+        } else {
+          await ctx.reply("У вас немає доступу до адмін-панелі.");
+        }
+        return;
+      
+      // Debug commands for development
+      case "/makeadmin":
+        await this.makeUserAdmin(ctx.userId, ctx);
+        return;
+    }
+
+    // Try to handle as a direct action
+    const isActionHandled = await this.keyboardService.handleAction(ctx, text);
+    if (isActionHandled) {
+      return;
+    }
+
+    // Handle AI processing for other messages
+    const assignment = await findByUserId(userId);
+    const assignedApartments = assignment?.apartmentIds || [];
+    const currentTasks = (await this.taskService.getTasksForUser(userId)).tasks || [];
+
     const result = await this.aiService.processMessage(text, {
-      userId: String(userId),
-      chatId: String(chatId),
+      userId,
+      chatId,
       isAdmin,
       assignedApartments,
       currentTasks
     });
 
     if (result.type === 'text') {
-      await this.sendMessage(String(chatId), result.content || "*Операція успішно виконана.*", "Markdown");
+      await this.sendMessage(chatId, result.content || "*Операція успішно виконана.*", "Markdown");
     } else if (result.type === 'function_call' && result.function_call) {
-
       const functionResult = await this.functionService.executeFunction(
         result.function_call.name,
         {
           ...JSON.parse(result.function_call.arguments),
-          userId: String(userId)
+          userId
         }
       );
       
       const followUp = await this.aiService.processFunctionResult(
-        String(chatId),
+        chatId,
         result.function_call.name,
         JSON.parse(result.function_call.arguments),
         functionResult
       );
       
-      await this.sendMessage(String(chatId), followUp.content, "Markdown");
+      await this.sendMessage(chatId, followUp.content, "Markdown");
     }
   }
 
+  /**
+   * Handle callback queries (button clicks)
+   */
+  async handleCallbackQuery(callbackQuery: { data: string; from: { id: number }; message: { chat: { id: number } } }): Promise<void> {
+    const { data, from, message } = callbackQuery;
+    const chatId = String(message.chat.id);
+    const userId = String(from.id);
+    
+    logger.info(`[TelegramService] Handling callback query: ${data} from user ${userId}`);
+    
+    const ctx = this.createContext(chatId, userId);
+    
+    // Pass to keyboard service for handling
+    await this.keyboardService.handleAction(ctx, data);
+  }
+
+  /**
+   * Handle /start command - initialize user and show welcome message
+   */
   async handleStartCommand(chatId: string | number, userId: string | number, firstName?: string, lastName?: string, username?: string): Promise<void> {
     const chatIdStr = String(chatId);
     const userIdStr = String(userId);
@@ -342,23 +301,88 @@ export class TelegramService {
         await this.sendMessage(chatIdStr, "⚠️ Помилка при синхронізації даних. Спробуйте пізніше.");
       }
 
-      // Send welcome message
-      logger.info(`[handleStartCommand] Sending welcome message`);
-      await this.sendMessage(
-        chatIdStr,
-        `*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
-        "Markdown",
-        mainMenuKeyboard
-      );
+      // Create context and show welcome message with keyboard
+      const ctx = this.createContext(chatId, userId);
+      const user = await findByTelegramId(userIdStr);
+      const isAdmin = user?.role === UserRoles.ADMIN;
+      
+      // Welcome message
+      await ctx.reply(`*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`, {
+        parse_mode: "Markdown"
+      });
+      
+      // Show keyboards
+      await this.keyboardService.showKeyboard(ctx, 'main_nav');
+      await this.keyboardService.showKeyboard(ctx, 'main_menu');
+      
     } catch (error) {
       logger.error(`[handleStartCommand] Critical error:`, error);
-      // Send welcome message even if there's an error
-      await this.sendMessage(
-        chatIdStr,
-        `*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`,
-        "Markdown",
-        mainMenuKeyboard
-      );
+      
+      // Create context and show a basic keyboard even if there's an error
+      const ctx = this.createContext(chatId, userId);
+      await ctx.reply(`*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`, {
+        parse_mode: "Markdown"
+      });
+      
+      await this.keyboardService.showKeyboard(ctx, 'main_nav');
+    }
+  }
+
+  // Simple methods for HTTP handler - these are just for backward compatibility
+  async handleMenuCommand(chatId: string | number): Promise<void> {
+    const ctx = this.createContext(chatId, chatId);
+    await this.keyboardService.handleAction(ctx, 'show_menu');
+  }
+
+  async handleHelpCommand(chatId: string | number): Promise<void> {
+    const ctx = this.createContext(chatId, chatId);
+    await this.keyboardService.handleAction(ctx, 'help');
+  }
+
+  async handleAboutCommand(chatId: string | number): Promise<void> {
+    const ctx = this.createContext(chatId, chatId);
+    await this.keyboardService.handleAction(ctx, 'about');
+  }
+
+  async handleGetMyTasks(chatId: string | number): Promise<void> {
+    const ctx = this.createContext(chatId, chatId);
+    await this.keyboardService.handleAction(ctx, 'show_tasks');
+  }
+
+  /**
+   * Makes the current user an admin
+   * @param userId User ID to make admin
+   * @param ctx Telegram context for replies
+   */
+  private async makeUserAdmin(userId: string | number, ctx: TelegramContext): Promise<void> {
+    try {
+      const user = await findByTelegramId(String(userId));
+      
+      if (!user) {
+        await ctx.reply("❌ Користувача не знайдено.");
+        return;
+      }
+      
+      if (user.role === UserRoles.ADMIN) {
+        await ctx.reply("✅ Ви вже є адміністратором.");
+        return;
+      }
+      
+      // Update user to admin role
+      if (user.id) {
+        await updateUser(user.id, {
+          role: UserRoles.ADMIN,
+          updatedAt: Timestamp.now().toDate()
+        });
+        
+        logger.info(`[TelegramService] User ${userId} self-promoted to admin`);
+        await ctx.reply("🎉 Вітаємо! Вам надано права адміністратора. Використовуйте команду /admin для доступу до адмін-панелі.");
+      } else {
+        await ctx.reply("❌ Помилка: користувач знайдений, але ID відсутній.");
+      }
+    } catch (error) {
+      logger.error(`[TelegramService] Error making user ${userId} admin:`, error);
+      await ctx.reply("❌ Помилка при наданні прав адміністратора. Спробуйте пізніше.");
     }
   }
 }

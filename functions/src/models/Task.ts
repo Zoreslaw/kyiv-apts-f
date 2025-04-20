@@ -1,5 +1,5 @@
 import { Timestamp } from 'firebase-admin/firestore';
-import { TaskStatuses, TaskTypes } from '../utils/constants';
+import { TaskStatus, TaskTypes } from '../utils/constants';
 
 export interface ITaskData {
     id: string;
@@ -7,7 +7,7 @@ export interface ITaskData {
     apartmentId: string;
     address: string;
     type: TaskTypes;
-    status: TaskStatuses;
+    status: TaskStatus;
     assignedStaffId?: string | null;
     dueDate: string | Date | Timestamp;
     notes?: string | null;
@@ -31,7 +31,7 @@ export class Task implements ITaskData {
     apartmentId: string;
     address: string;
     type: TaskTypes;
-    status: TaskStatuses;
+    status: TaskStatus;
     assignedStaffId: string | null;
     dueDate: string | Date | Timestamp;
     notes: string | null;

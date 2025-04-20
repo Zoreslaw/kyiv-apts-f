@@ -202,10 +202,10 @@ export class FunctionExecutionService {
       }
 
       const user = await findByUsernameOrName(targetUsername);
-      if (!user) {
+      if (!user || !user.id) {
         return {
           success: false,
-          message: 'Користувача не знайдено.'
+          message: 'Користувача не знайдено або ID користувача відсутній.'
         };
       }
 
@@ -263,10 +263,10 @@ export class FunctionExecutionService {
       }
 
       const user = await findByUsernameOrName(targetUsername);
-      if (!user) {
+      if (!user || !user.id) {
         return {
           success: false,
-          message: 'Користувача не знайдено.'
+          message: 'Користувача не знайдено або ID користувача відсутній.'
         };
       }
 
