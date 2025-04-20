@@ -95,6 +95,36 @@ export async function findByTelegramId(telegramId: string): Promise<User | null>
     const snapshot = await db
       .collection(USERS_COLLECTION)
       .where("telegramId", "==", telegramId)
+    const telegramIdStr = String(telegramId);
+    const telegramIdNum = Number(telegramId);
+    
+    // First try direct document lookup by ID
+    try {
+      const docRef = db.collection("users").doc(telegramIdStr);
+      const docSnap = await docRef.get();
+      
+      if (docSnap.exists) {
+        return new User({ id: docSnap.id, ...docSnap.data() } as IUserData);
+      }
+    } catch (error) {
+      logger.debug("Document not found by direct ID lookup:", error);
+      // Continue with field searches
+    }
+    
+    // Try by userId with both string and number values
+    const userIdQuery = await db.collection("users")
+      .where("userId", "in", [telegramIdStr, telegramIdNum])
+      .limit(1)
+      .get();
+    
+    if (!userIdQuery.empty) {
+      const doc = userIdQuery.docs[0];
+      return new User({ id: doc.id, ...doc.data() } as IUserData);
+    }
+
+    // Try by chatId with both string and number values
+    const chatIdQuery = await db.collection("users")
+      .where("chatId", "in", [telegramIdStr, telegramIdNum])
       .limit(1)
       .get();
 
