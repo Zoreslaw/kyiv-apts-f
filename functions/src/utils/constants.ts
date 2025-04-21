@@ -9,7 +9,8 @@ export const TIME_CHANGES_COLLECTION = 'timeChanges';
 // User roles
 export enum UserRoles {
   ADMIN = 'admin',
-  CLEANER = 'cleaner'
+  CLEANER = 'cleaner',
+  USER = 'user'
 }
 
 // Task types

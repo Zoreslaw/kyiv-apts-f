@@ -9,10 +9,11 @@ import { syncReservationsAndTasks } from "./syncService";
 import { findByTelegramId } from "../repositories/userRepository";
 import { findByUserId } from "../repositories/cleaningAssignmentRepository";
 import { UserRoles } from "../utils/constants";
-import { KeyboardService, TelegramContext } from "./keyboardService";
-import { KEYBOARDS } from "../constants/keyboards";
+import { TelegramCoordinator } from "./keyboard/telegramCoordinator";
+import { TelegramContext } from "./keyboard/keyboardManager";
 import { updateUser } from "../repositories/userRepository";
 import { Timestamp } from "firebase-admin/firestore";
+import FormData from 'form-data';
 
 // Types
 interface TelegramMessage {
@@ -44,13 +45,13 @@ export class TelegramService {
   private aiService: AIService;
   private taskService: TaskService;
   private functionService: FunctionExecutionService;
-  private keyboardService: KeyboardService;
+  private telegramCoordinator: TelegramCoordinator;
 
   constructor(openaiApiKey?: string) {
     this.aiService = new AIService();
     this.taskService = new TaskService();
     this.functionService = new FunctionExecutionService();
-    this.keyboardService = new KeyboardService(this.taskService, this);
+    this.telegramCoordinator = new TelegramCoordinator(this.taskService);
   }
 
   public async sendMessage(
@@ -95,6 +96,49 @@ export class TelegramService {
           }
         }
         
+        // Handle photo option
+        if (options?.photo) {
+          try {
+            const formData = new FormData();
+            formData.append('chat_id', String(chatId));
+            
+            if (options.photo.source) {
+              // If source is provided, it's a buffer
+              formData.append('photo', options.photo.source, 'photo.png');
+            } else if (options.photo.url) {
+              // If URL is provided
+              formData.append('photo', options.photo.url);
+            }
+            
+            if (options.caption) {
+              formData.append('caption', options.caption);
+            }
+            
+            if (options.parse_mode) {
+              formData.append('parse_mode', options.parse_mode);
+            }
+            
+            if (options.reply_markup) {
+              formData.append('reply_markup', JSON.stringify(options.reply_markup));
+            }
+            
+            const response = await axios.post<TelegramResponse>(`${TELEGRAM_API}/sendPhoto`, formData, {
+              headers: formData.getHeaders()
+            });
+            
+            return { message_id: response.data.result.message_id };
+          } catch (error) {
+            logger.error(`Error sending photo to chat ${chatId}:`, error);
+            // Fall back to text message
+            return this.sendMessage(
+              chatId, 
+              options.caption || text, 
+              options.parse_mode, 
+              options.reply_markup
+            );
+          }
+        }
+        
         return this.sendMessage(
           chatId, 
           text, 
@@ -122,9 +166,9 @@ export class TelegramService {
     const isAdmin = user?.role === UserRoles.ADMIN;
     const ctx = this.createContext(chatId, userId);
 
-    // Check if we're in an apartment editing mode and try to process the text input
-    const isEditingApartment = await this.keyboardService.processApartmentEdit(ctx, text);
-    if (isEditingApartment) {
+    // Check if we're in an editing mode and try to process the text input
+    const isEditingTask = await this.telegramCoordinator.processText(ctx, text);
+    if (isEditingTask) {
       return;
     }
 
@@ -132,28 +176,28 @@ export class TelegramService {
     switch (text) {
       case "/menu":
       case "⚙️ Меню":
-        await this.keyboardService.handleAction(ctx, 'show_menu');
+        await this.telegramCoordinator.handleAction(ctx, 'show_menu');
         return;
 
       case "/help":
       case "❓ Допомога":
-        await this.keyboardService.handleAction(ctx, 'help');
+        await this.telegramCoordinator.handleAction(ctx, 'help');
         return;
 
       case "/about":
       case "ℹ️ Про бота":
-        await this.keyboardService.handleAction(ctx, 'about');
+        await this.telegramCoordinator.handleAction(ctx, 'about');
         return;
 
       case "/get_my_tasks":
       case "📋 Мої завдання":
-        await this.keyboardService.handleAction(ctx, 'show_tasks');
+        await this.telegramCoordinator.handleAction(ctx, 'show_tasks');
         return;
         
       case "/admin":
       case "👨‍💼 Адмін панель":
         if (isAdmin) {
-          await this.keyboardService.handleAction(ctx, 'admin_panel');
+          await this.telegramCoordinator.handleAction(ctx, 'admin_panel');
         } else {
           await ctx.reply("У вас немає доступу до адмін-панелі.");
         }
@@ -162,7 +206,7 @@ export class TelegramService {
       // Admin menu button handlers
       case "Змінити заїзди":
         if (isAdmin) {
-          await this.keyboardService.handleAction(ctx, 'edit_checkins');
+          await this.telegramCoordinator.handleAction(ctx, 'edit_checkins');
         } else {
           await ctx.reply("У вас немає доступу до цієї функції.");
         }
@@ -170,7 +214,7 @@ export class TelegramService {
         
       case "Змінити виїзди":
         if (isAdmin) {
-          await this.keyboardService.handleAction(ctx, 'edit_checkouts');
+          await this.telegramCoordinator.handleAction(ctx, 'edit_checkouts');
         } else {
           await ctx.reply("У вас немає доступу до цієї функції.");
         }
@@ -178,7 +222,7 @@ export class TelegramService {
         
       case "Користувачі":
         if (isAdmin) {
-          await this.keyboardService.handleAction(ctx, 'manage_users');
+          await this.telegramCoordinator.handleAction(ctx, 'manage_users');
         } else {
           await ctx.reply("У вас немає доступу до цієї функції.");
         }
@@ -186,20 +230,20 @@ export class TelegramService {
         
       case "Квартири":
         if (isAdmin) {
-          await this.keyboardService.handleAction(ctx, 'manage_apartments');
+          await this.telegramCoordinator.handleAction(ctx, 'manage_apartments');
         } else {
           await ctx.reply("У вас немає доступу до цієї функції.");
         }
         return;
         
       case "Головне меню":
-        await this.keyboardService.handleAction(ctx, 'back_to_main');
+        await this.telegramCoordinator.handleAction(ctx, 'back_to_main');
         return;
         
       case "/admin":
       case "👨‍💼 Адмін панель":
         if (isAdmin) {
-          await this.keyboardService.handleAction(ctx, 'admin_panel');
+          await this.telegramCoordinator.handleAction(ctx, 'admin_panel');
         } else {
           await ctx.reply("У вас немає доступу до адмін-панелі.");
         }
@@ -212,7 +256,7 @@ export class TelegramService {
     }
 
     // Try to handle as a direct action
-    const isActionHandled = await this.keyboardService.handleAction(ctx, text);
+    const isActionHandled = await this.telegramCoordinator.handleAction(ctx, text);
     if (isActionHandled) {
       return;
     }
@@ -264,8 +308,8 @@ export class TelegramService {
     
     const ctx = this.createContext(chatId, userId);
     
-    // Pass to keyboard service for handling
-    await this.keyboardService.handleAction(ctx, data);
+    // Pass to coordinator for handling
+    await this.telegramCoordinator.handleAction(ctx, data);
   }
 
   /**
@@ -303,8 +347,6 @@ export class TelegramService {
 
       // Create context and show welcome message with keyboard
       const ctx = this.createContext(chatId, userId);
-      const user = await findByTelegramId(userIdStr);
-      const isAdmin = user?.role === UserRoles.ADMIN;
       
       // Welcome message
       await ctx.reply(`*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`, {
@@ -312,8 +354,7 @@ export class TelegramService {
       });
       
       // Show keyboards
-      await this.keyboardService.showKeyboard(ctx, 'main_nav');
-      await this.keyboardService.showKeyboard(ctx, 'main_menu');
+      await this.telegramCoordinator.showKeyboard(ctx, 'main_nav');
       
     } catch (error) {
       logger.error(`[handleStartCommand] Critical error:`, error);
@@ -324,29 +365,29 @@ export class TelegramService {
         parse_mode: "Markdown"
       });
       
-      await this.keyboardService.showKeyboard(ctx, 'main_nav');
+      await this.telegramCoordinator.showKeyboard(ctx, 'main_nav');
     }
   }
 
   // Simple methods for HTTP handler - these are just for backward compatibility
   async handleMenuCommand(chatId: string | number): Promise<void> {
     const ctx = this.createContext(chatId, chatId);
-    await this.keyboardService.handleAction(ctx, 'show_menu');
+    await this.telegramCoordinator.handleAction(ctx, 'show_menu');
   }
 
   async handleHelpCommand(chatId: string | number): Promise<void> {
     const ctx = this.createContext(chatId, chatId);
-    await this.keyboardService.handleAction(ctx, 'help');
+    await this.telegramCoordinator.handleAction(ctx, 'help');
   }
 
   async handleAboutCommand(chatId: string | number): Promise<void> {
     const ctx = this.createContext(chatId, chatId);
-    await this.keyboardService.handleAction(ctx, 'about');
+    await this.telegramCoordinator.handleAction(ctx, 'about');
   }
 
   async handleGetMyTasks(chatId: string | number): Promise<void> {
     const ctx = this.createContext(chatId, chatId);
-    await this.keyboardService.handleAction(ctx, 'show_tasks');
+    await this.telegramCoordinator.handleAction(ctx, 'show_tasks');
   }
 
   /**

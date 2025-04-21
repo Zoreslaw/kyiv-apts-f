@@ -8,6 +8,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { findByTelegramId } from "./userRepository";
 import { UserRoles } from "../utils/constants";
 import { findByUserId as findCleaningAssignmentByUserId } from "./cleaningAssignmentRepository";
+import { toKievDate } from "../utils/dateTime";
 
 const TASKS_COLLECTION = "tasks";
 
@@ -416,6 +417,49 @@ async function getTasksById(taskId: string): Promise<{ success: boolean; message
   }
 }
 
+/**
+ * Find tasks for a specific date filtered by task type
+ */
+async function getTasksForDate(date: Date, taskType: TaskTypes): Promise<Task[]> {
+  try {
+    // Convert the date to start and end of day in Kiev timezone
+    const kievDate = toKievDate(date);
+    const startOfDay = kievDate.startOf('day').toDate();
+    const endOfDay = kievDate.endOf('day').toDate();
+
+    const startTimestamp = Timestamp.fromDate(startOfDay);
+    const endTimestamp = Timestamp.fromDate(endOfDay);
+
+    logger.info(`[TaskRepository] Getting ${taskType} tasks for date ${date.toDateString()} (Kiev time)`);
+    logger.info(`[TaskRepository] Date range: ${startOfDay.toISOString()} to ${endOfDay.toISOString()}`);
+    
+    // Query Firestore for tasks matching the date range and task type
+    const snapshot = await db
+      .collection(TASKS_COLLECTION)
+      .where("dueDate", ">=", startTimestamp)
+      .where("dueDate", "<=", endTimestamp)
+      .where("type", "==", taskType)
+      .get();
+    
+    logger.info(`[TaskRepository] Found ${snapshot.size} ${taskType} tasks for ${date.toDateString()}`);
+    
+    // Convert to Task objects
+    return snapshot.docs.map(doc => {
+      const data = doc.data();
+      return new Task({
+        id: doc.id,
+        ...data,
+        createdAt: data.createdAt instanceof Timestamp ? data.createdAt : getTimestamp(),
+        updatedAt: data.updatedAt instanceof Timestamp ? data.updatedAt : getTimestamp(),
+        dueDate: data.dueDate instanceof Timestamp ? data.dueDate : getTimestamp()
+      } as ITaskData);
+    });
+  } catch (error) {
+    logger.error(`[TaskRepository] Error getting ${taskType} tasks for date ${date.toDateString()}:`, error);
+    return [];
+  }
+}
+
 export {
   findTasksByUserId,
   updateTask,
@@ -426,5 +470,6 @@ export {
   deleteTask,
   findByReservationId,
   findByApartmentId,
-  getTasksById
+  getTasksById,
+  getTasksForDate
 }; 

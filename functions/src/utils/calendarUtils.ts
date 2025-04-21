@@ -1,5 +1,8 @@
 import * as Canvas from 'canvas';
 import moment from 'moment-timezone';
+import { createCanvas, loadImage } from 'canvas';
+import * as path from 'path';
+import { logger } from 'firebase-functions';
 
 /**
  * Format a date using moment.js
@@ -57,110 +60,7 @@ export function getStartOfMonth(date: Date): Date {
   return moment(date).startOf('month').toDate();
 }
 
-/**
- * Generate a calendar image for a specific month
- * @param date Date object representing the month to display
- * @param title Optional title for the calendar
- * @returns Promise resolving to a Buffer containing the image data
- */
-export async function generateCalendarImage(date: Date, title?: string): Promise<Buffer> {
-  // Canvas settings
-  const canvasWidth = 800;
-  const canvasHeight = 600;
-  const canvas = Canvas.createCanvas(canvasWidth, canvasHeight);
-  const ctx = canvas.getContext('2d');
 
-  // Colors
-  const bgColor = '#f0f0f0';
-  const headerBgColor = '#4a76a8'; // Ukrainian blue color
-  const headerTextColor = '#ffffff';
-  const dayNameColor = '#555555';
-  const todayBgColor = '#ffd700'; // Ukrainian yellow color
-  const selectedDayBgColor = '#e6f7ff';
-  const dayTextColor = '#333333';
-
-  // Fill background
-  ctx.fillStyle = bgColor;
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-
-  // Calendar title
-  const month = moment(date).format('MMMM YYYY');
-  const headerText = title ? `${title} - ${month}` : month;
-  
-  ctx.fillStyle = headerBgColor;
-  ctx.fillRect(0, 0, canvasWidth, 80);
-  
-  ctx.font = 'bold 32px Arial';
-  ctx.fillStyle = headerTextColor;
-  ctx.textAlign = 'center';
-  ctx.fillText(headerText, canvasWidth / 2, 50);
-
-  // Day names
-  const dayNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'];
-  const cellWidth = canvasWidth / 7;
-  const dayNamesY = 120;
-  
-  ctx.font = 'bold 18px Arial';
-  ctx.fillStyle = dayNameColor;
-  ctx.textAlign = 'center';
-  
-  dayNames.forEach((name, i) => {
-    ctx.fillText(name, i * cellWidth + cellWidth / 2, dayNamesY);
-  });
-
-  // Calendar cells
-  const startOfMonth = getStartOfMonth(date);
-  const daysInMonth = getDaysInMonth(date);
-  const firstWeekday = getDayOfWeek(startOfMonth);
-  
-  const cellHeight = 80;
-  let rowCount = Math.ceil((firstWeekday + daysInMonth) / 7);
-  const calendarStartY = 140;
-  
-  // Current date for highlighting today
-  const today = getKievDateWithOffset();
-  const isCurrentMonth = 
-    today.getMonth() === date.getMonth() && 
-    today.getFullYear() === date.getFullYear();
-  const todayDate = today.getDate();
-  const selectedDate = date.getDate();
-
-  ctx.textAlign = 'left';
-  ctx.font = '16px Arial';
-
-  for (let row = 0; row < rowCount; row++) {
-    for (let col = 0; col < 7; col++) {
-      const dayIndex = row * 7 + col - firstWeekday + 1;
-      const x = col * cellWidth;
-      const y = calendarStartY + row * cellHeight;
-      
-      // Draw cell border
-      ctx.strokeStyle = '#dddddd';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(x, y, cellWidth, cellHeight);
-      
-      if (dayIndex > 0 && dayIndex <= daysInMonth) {
-        // Highlight today
-        if (isCurrentMonth && dayIndex === todayDate) {
-          ctx.fillStyle = todayBgColor;
-          ctx.fillRect(x, y, cellWidth, cellHeight);
-        } 
-        // Highlight selected day
-        else if (dayIndex === selectedDate) {
-          ctx.fillStyle = selectedDayBgColor;
-          ctx.fillRect(x, y, cellWidth, cellHeight);
-        }
-        
-        // Draw day number
-        ctx.fillStyle = dayTextColor;
-        ctx.fillText(dayIndex.toString(), x + 10, y + 25);
-      }
-    }
-  }
-
-  // Convert canvas to buffer
-  return canvas.toBuffer('image/png');
-}
 
 /**
  * Generates a text-based calendar for the specified month
@@ -231,4 +131,86 @@ export function generateCalendarText(date: Date, type: string = ''): string {
   }
   
   return calendar;
+}
+
+/**
+ * Generate a calendar image using canvas
+ * @param date The date to display
+ * @param type Title of the calendar (e.g., 'Заїзди', 'Виїзди')
+ * @returns Buffer containing the PNG image data
+ */
+export async function generateCalendarImage(date: Date, type: string = ''): Promise<Buffer> {
+  try {
+    const width = 600;
+    const height = 300;
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    // Background color as fallback
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, width, height);
+
+    try {
+      // Load and draw background image
+      // Adjust the path to your assets directory
+      const image = await loadImage(path.join(__dirname, '../../assets/332463779.jpg'));
+      
+      // Draw image with proper scaling to cover the canvas
+      const scale = Math.max(width / image.width, height / image.height);
+      const x = (width - image.width * scale) / 2;
+      const y = (height - image.height * scale) / 2;
+      
+      ctx.drawImage(image, x, y, image.width * scale, image.height * scale);
+
+      // Apply a gradient overlay
+      const gradient = ctx.createLinearGradient(0, 0, 0, height);
+      gradient.addColorStop(0, 'rgba(0, 0, 0, 0.8)');
+      gradient.addColorStop(1, 'rgba(0, 0, 0, 0.6)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+    } catch (error) {
+      logger.warn('Could not load background image, using solid background', error);
+    }
+
+    // Draw type text if provided
+    if (type) {
+      ctx.font = 'bold 32px Arial';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.fillText(type, width / 2, 60);
+
+      // Add decorative line under type
+      ctx.beginPath();
+      ctx.moveTo(width / 2 - 50, 75);
+      ctx.lineTo(width / 2 + 50, 75);
+      ctx.strokeStyle = '#2F80ED';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+
+    // Draw day number
+    ctx.font = 'bold 120px Arial';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.fillText(date.getDate().toString(), width / 2, 180);
+
+    // Draw month and year
+    const month = date.toLocaleString('uk-UA', { month: 'long' });
+    const year = date.getFullYear();
+    
+    // Month
+    ctx.font = 'bold 36px Arial';
+    ctx.fillStyle = '#2F80ED';
+    ctx.fillText(month, width / 2, 230);
+    
+    // Year
+    ctx.font = '24px Arial';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(year + ' р.', width / 2, 260);
+
+    return canvas.toBuffer('image/png');
+  } catch (error) {
+    logger.error('Error generating calendar image:', error);
+    throw error;
+  }
 }

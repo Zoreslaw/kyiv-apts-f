@@ -99,9 +99,6 @@ export const APARTMENTS_NAVIGATION: KeyboardConfig = {
   resize: true,
   requiresAdmin: true,
   buttons: [
-    { text: 'Додати квартиру', action: 'add_apartment', role: 'admin', position: { row: 0, col: 0 } },
-    { text: 'Видалити квартиру', action: 'delete_apartment', role: 'admin', position: { row: 0, col: 1 } },
-    { text: 'Список квартир', action: 'list_apartments', role: 'admin', position: { row: 1, col: 0 } },
     { text: 'Змінити заїзди', action: 'edit_checkins', role: 'admin', position: { row: 2, col: 0 } },
     { text: 'Змінити виїзди', action: 'edit_checkouts', role: 'admin', position: { row: 2, col: 1 } },
     { text: 'Користувачі', action: 'manage_users', role: 'admin', position: { row: 3, col: 0 } },
@@ -117,9 +114,6 @@ export const USERS_NAVIGATION: KeyboardConfig = {
   resize: true,
   requiresAdmin: true,
   buttons: [
-    { text: 'Додати користувача', action: 'add_user', role: 'admin', position: { row: 0, col: 0 } },
-    { text: 'Видалити користувача', action: 'delete_user', role: 'admin', position: { row: 0, col: 1 } },
-    { text: 'Список користувачів', action: 'list_users', role: 'admin', position: { row: 1, col: 0 } },
     { text: 'Змінити заїзди', action: 'edit_checkins', role: 'admin', position: { row: 2, col: 0 } },
     { text: 'Змінити виїзди', action: 'edit_checkouts', role: 'admin', position: { row: 2, col: 1 } },
     { text: 'Квартири', action: 'manage_apartments', role: 'admin', position: { row: 3, col: 0 } },
@@ -164,18 +158,18 @@ export const CHECKOUT_EDIT_KEYBOARD: KeyboardConfig = {
  */
 
 // Main menu inline keyboard
-export const MAIN_MENU: KeyboardConfig = {
-  id: 'main_menu',
-  title: 'Головне меню:',
-  type: 'inline',
-  buttons: [
-    { text: '📋 Мої завдання', action: 'show_tasks', role: 'all', position: { row: 0, col: 0 } },
-    { text: '⚙️ Меню', action: 'show_menu', role: 'all', position: { row: 0, col: 1 } },
-    { text: '❓ Допомога', action: 'help', role: 'all', position: { row: 1, col: 0 } },
-    { text: 'ℹ️ Про бота', action: 'about', role: 'all', position: { row: 1, col: 1 } },
-    { text: '👨‍💼 Адмін панель', action: 'admin_panel', role: 'admin', position: { row: 2, col: 0 } }
-  ]
-};
+// export const MAIN_MENU: KeyboardConfig = {
+//   id: 'main_menu',
+//   title: 'Головне меню:',
+//   type: 'inline',
+//   buttons: [
+//     { text: '📋 Мої завдання', action: 'show_tasks', role: 'all', position: { row: 0, col: 0 } },
+//     { text: '⚙️ Меню', action: 'show_menu', role: 'all', position: { row: 0, col: 1 } },
+//     { text: '❓ Допомога', action: 'help', role: 'all', position: { row: 1, col: 0 } },
+//     { text: 'ℹ️ Про бота', action: 'about', role: 'all', position: { row: 1, col: 1 } },
+//     { text: '👨‍💼 Адмін панель', action: 'admin_panel', role: 'admin', position: { row: 2, col: 0 } }
+//   ]
+// };
 
 // Admin panel inline keyboard
 export const ADMIN_MENU: KeyboardConfig = {
@@ -339,6 +333,219 @@ export function createApartmentEditKeyboard(apartments: { id: string }[], type: 
   return buttons;
 }
 
+// Add these new keyboard configurations to better support task management modes
+
+// Task List navigation (shared between check-ins/check-outs)
+export const TASK_LIST_NAVIGATION: KeyboardConfig = {
+  id: 'task_list_nav',
+  type: 'inline',
+  requiresAdmin: true,
+  buttons: [
+    { text: '◀️ Попередній день', action: 'prev_day', role: 'admin', position: { row: 0, col: 0 } },
+    { text: 'Наступний день ▶️', action: 'next_day', role: 'admin', position: { row: 0, col: 1 } },
+    { text: '✏️ Редагувати', action: 'show_edit', role: 'admin', position: { row: 1, col: 0 } },
+    { text: '↩️ Назад', action: 'admin_panel', role: 'admin', position: { row: 2, col: 0 } }
+  ]
+};
+
+// Task Edit mode (shared between check-ins/check-outs)
+export const TASK_EDIT_BUTTONS: KeyboardConfig = {
+  id: 'task_edit_buttons',
+  type: 'inline',
+  requiresAdmin: true,
+  buttons: [
+    { text: '⏰ Змінити час', action: 'edit_time', role: 'admin', position: { row: 0, col: 0 } },
+    { text: '🔑 Змінити ключі', action: 'edit_keys', role: 'admin', position: { row: 0, col: 1 } },
+    { text: '💰 Змінити суму', action: 'edit_money', role: 'admin', position: { row: 1, col: 0 } },
+    { text: '↩️ Назад до списку', action: 'back_to_list', role: 'admin', position: { row: 2, col: 0 } }
+  ]
+};
+
+// Add this interface for dynamic keyboard creation
+export interface TaskDisplayKeyboardOptions {
+  tasks: any[];
+  type: 'checkin' | 'checkout';
+  page: number;
+  totalPages: number;
+  forEditing: boolean;
+}
+
+/**
+ * Creates a keyboard for task display (check-in/check-out list) with proper buttons
+ */
+export function createTaskDisplayKeyboard(options: TaskDisplayKeyboardOptions): KeyboardButtonConfig[] {
+  const { tasks, type, page, totalPages, forEditing } = options;
+  const buttons: KeyboardButtonConfig[] = [];
+  
+  // Navigation buttons always at the top
+  buttons.push({ 
+    text: '◀️ Попередній день', 
+    action: `prev_${type}_day`, 
+    role: 'admin', 
+    position: { row: 0, col: 0 } 
+  });
+  
+  buttons.push({ 
+    text: 'Наступний день ▶️', 
+    action: `next_${type}_day`, 
+    role: 'admin', 
+    position: { row: 0, col: 1 } 
+  });
+  
+  // Different handling for edit mode vs. view mode
+  if (forEditing) {
+    // Add task buttons in edit mode
+    if (tasks.length > 0) {
+      tasks.forEach((task, index) => {
+        const timeInfo = type === 'checkin' 
+          ? (task.checkinTime ? ` ⏰ ${task.checkinTime}` : '')
+          : (task.checkoutTime ? ` ⏰ ${task.checkoutTime}` : '');
+        const guestInfo = task.guestName ? ` 👤 ${task.guestName.split(' ')[0]}` : '';
+        
+        buttons.push({
+          text: `🏠 ${task.apartmentId}${timeInfo}${guestInfo}`, 
+          action: `edit_${type}_${task.id}`,
+          role: 'admin',
+          position: { row: index + 1, col: 0 }
+        });
+      });
+    } else {
+      // No tasks message
+      buttons.push({
+        text: 'Немає завдань для редагування', 
+        action: `cancel_${type}_edit`,
+        role: 'admin',
+        position: { row: 1, col: 0 }
+      });
+    }
+    
+    // Add cancel button at the end
+    const cancelRow = tasks.length > 0 ? tasks.length + 1 : 2;
+    buttons.push({ 
+      text: '❌ Скасувати', 
+      action: `cancel_${type}_edit`, 
+      role: 'admin', 
+      position: { row: cancelRow, col: 0 } 
+    });
+  } else {
+    // Add edit button in view mode (if there are tasks)
+    if (tasks.length > 0) {
+      buttons.push({ 
+        text: '✏️ Редагувати', 
+        action: `show_${type}_edit_${page}`, 
+        role: 'admin', 
+        position: { row: 1, col: 0 } 
+      });
+    }
+    
+    // Add pagination buttons if needed
+    if (totalPages > 1) {
+      const paginationRow = tasks.length > 0 ? 2 : 1;
+      
+      if (page > 1) {
+        buttons.push({ 
+          text: '⬅️', 
+          action: `${type}_page_${page - 1}`, 
+          role: 'admin', 
+          position: { row: paginationRow, col: 0 } 
+        });
+      }
+      
+      if (page < totalPages) {
+        buttons.push({ 
+          text: '➡️', 
+          action: `${type}_page_${page + 1}`, 
+          role: 'admin', 
+          position: { row: paginationRow, col: 1 } 
+        });
+      }
+    }
+  }
+  
+  // Back button - always at the bottom
+  const backRow = buttons.reduce((max, btn) => Math.max(max, btn.position?.row || 0), 0) + 1;
+  buttons.push({ 
+    text: '↩️ Назад', 
+    action: 'admin_panel', 
+    role: 'admin', 
+    position: { row: backRow, col: 0 } 
+  });
+  
+  return buttons;
+}
+
+/**
+ * Create button config for editing a specific task
+ */
+export function createTaskEditButtons(
+  task: any, 
+  type: 'checkin' | 'checkout', 
+  apartmentAddress?: string
+): KeyboardButtonConfig[] {
+  const buttons: KeyboardButtonConfig[] = [];
+  
+  // Time edit button
+  buttons.push({ 
+    text: '⏰ Змінити час', 
+    action: `edit_${type}_time`, 
+    role: 'admin', 
+    position: { row: 0, col: 0 } 
+  });
+  
+  // Keys edit button
+  buttons.push({ 
+    text: '🔑 Змінити ключі', 
+    action: `edit_${type}_keys`, 
+    role: 'admin', 
+    position: { row: 0, col: 1 } 
+  });
+  
+  // Money edit button
+  buttons.push({ 
+    text: '💰 Змінити суму', 
+    action: `edit_${type}_money`, 
+    role: 'admin', 
+    position: { row: 1, col: 0 } 
+  });
+  
+  // Back button
+  buttons.push({ 
+    text: '↩️ Назад до списку', 
+    action: `back_to_${type}s`, 
+    role: 'admin', 
+    position: { row: 2, col: 0 } 
+  });
+  
+  return buttons;
+}
+
+/**
+ * Format task detail text for display
+ */
+export function formatTaskDetailText(
+  task: any, 
+  type: 'checkin' | 'checkout', 
+  apartmentAddress?: string
+): string {
+  const title = type === 'checkin' ? 'заїзду' : 'виїзду';
+  const timeField = type === 'checkin' ? task.checkinTime : task.checkoutTime;
+  
+  // Address details
+  let addressDetails = '';
+  if (apartmentAddress) {
+    addressDetails = `\n📍 *Адреса:* ${apartmentAddress}`;
+  }
+  
+  return `📝 *Редагування ${title} - ${task.apartmentId}*\n` +
+    `━━━━━━━━━━━━━━━\n` +
+    `${addressDetails}\n\n` +
+    `*Поточні дані:*\n` +
+    `⏰ *Час:* ${timeField || 'Не вказано'}\n` +
+    `🔑 *Ключі:* ${task.keysCount || '1'}\n` +
+    `💰 *Сума:* ${task.sumToCollect || '0'} грн\n\n` +
+    `*Оберіть параметр для редагування:*`;
+}
+
 /**
  * Collection of all keyboard configurations for easy access
  */
@@ -351,7 +558,9 @@ export const KEYBOARDS: Record<string, KeyboardConfig> = {
   users_nav: USERS_NAVIGATION,
   checkin_edit: CHECKIN_EDIT_KEYBOARD,
   checkout_edit: CHECKOUT_EDIT_KEYBOARD,
-  main_menu: MAIN_MENU,
+  task_list_nav: TASK_LIST_NAVIGATION,
+  task_edit_buttons: TASK_EDIT_BUTTONS,
+  // main_menu: MAIN_MENU,
   admin_menu: ADMIN_MENU
 };
 
