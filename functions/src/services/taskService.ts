@@ -6,80 +6,7 @@ import { logger } from "firebase-functions";
 import { findOrCreateUser } from "./userService";
 import { getKievDateRange, toKievDate, formatKievDate } from "../utils/dateTime";
 
-async function getTasksForUser(userId: string): Promise<Task[]> {
-  return findTasksByUserId(userId);
-}
-
-async function updateTaskStatus(taskId: string, status: TaskStatus, userId: string): Promise<Task | null> {
-  return updateTask(taskId, { 
-    status, 
-    updatedAt: Timestamp.now(), 
-    updatedBy: userId 
-  });
-}
-
 export class TaskService {
-  groupTasksByDate(tasks: Task[]): Record<string, { checkouts: Task[]; checkins: Task[] }> {
-    const grouped: Record<string, { checkouts: Task[]; checkins: Task[] }> = {};
-    
-    tasks.forEach((task) => {
-      // Convert Timestamp to YYYY-MM-DD string format using our utility
-      const date = formatKievDate(task.dueDate, "YYYY-MM-DD");
-
-      if (!grouped[date]) {
-        grouped[date] = { checkouts: [], checkins: [] };
-      }
-      
-      if (task.type === TaskTypes.CHECKOUT) {
-        grouped[date].checkouts.push(task);
-      } else if (task.type === TaskTypes.CHECKIN) {
-        grouped[date].checkins.push(task);
-      }
-    });
-    
-    return grouped;
-  }
-
-  formatTasksMessage(dateString: string, checkouts: Task[], checkins: Task[]): string {
-    let msg = `\n\n📅 *${dateString}* 📅\n\n====================\n\n`;
-
-    if (checkouts.length > 0) {
-      msg += "🔥 *ВИЇЗДИ:* 🔥\n\n";
-      msg += "⚠️ *ВАЖЛИВО:* ⚠️\n";
-      msg += "Прибирання має бути завершено до 14:00\n\n";
-      for (const task of checkouts) {
-        msg += `🔴 *ID:* ${task.apartmentId}\n`;
-        msg += `🏠 *Адреса:* ${task.address}\n`;
-        msg += `👤 *Гість:* ${task.guestName || 'Unknown'}\n`;
-        msg += task.checkoutTime
-          ? `⏰ *Виїзд:* ${task.checkoutTime}\n`
-          : "⏰ *Виїзд:* не призначено\n";
-        msg += `💰 *Сума:* ${task.sumToCollect || 0}\n`;
-        msg += `🔑 *Ключів:* ${task.keysCount || 1}\n`;
-        msg += `📞 *Контакти:* ${task.guestPhone || 'Unknown'}\n\n`;
-      }
-    }
-
-    if (checkins.length > 0) {
-      msg += "✨ *ЗАЇЗДИ:* ✨\n\n";
-      msg += "⚠️ *ВАЖЛИВО:* ⚠️\n";
-      msg += "Квартира має бути готова до заїзду\n\n";
-      for (const task of checkins) {
-        msg += `🟢 *ID:* ${task.apartmentId}\n`;
-        msg += `🏠 *Адреса:* ${task.address}\n`;
-        msg += `👤 *Гість:* ${task.guestName || 'Unknown'}\n`;
-        msg += task.checkinTime
-          ? `⏰ *Заїзд:* ${task.checkinTime}\n`
-          : "⏰ *Заїзд:* не призначено\n";
-        msg += `💰 *Сума:* ${task.sumToCollect || 0}\n`;
-        msg += `🔑 *Ключів:* ${task.keysCount || 1}\n`;
-        msg += `📞 *Контакти:* ${task.guestPhone || 'Unknown'}\n\n`;
-      }
-    }
-
-    return msg;
-  }
-
   async getTasksForUser(chatId: string | number): Promise<{ success: boolean; message?: string; tasks?: Task[] }> {
     try {
       const chatIdStr = String(chatId);
@@ -114,6 +41,67 @@ export class TaskService {
         message: "Помилка при отриманні завдань. Спробуйте пізніше."
       };
     }
+  }
+
+  async updateTaskStatus(taskId: string, status: TaskStatus, userId: string): Promise<Task | null> {
+    return updateTask(taskId, { 
+      status, 
+      updatedAt: Timestamp.now(), 
+      updatedBy: userId 
+    });
+  }
+
+  async updateTaskTime(taskId: string, time: string, userId: string): Promise<Task | null> {
+    const task = await this.getTaskById(taskId);
+    if (!task) return null;
+
+    return updateTask(taskId, {
+      [task.type === TaskTypes.CHECKIN ? 'checkinTime' : 'checkoutTime']: time,
+      updatedAt: Timestamp.now(),
+      updatedBy: userId
+    });
+  }
+
+  async updateTaskKeys(taskId: string, keysCount: number, userId: string): Promise<Task | null> {
+    return updateTask(taskId, {
+      keysCount,
+      updatedAt: Timestamp.now(),
+      updatedBy: userId
+    });
+  }
+
+  async updateTaskMoney(taskId: string, sumToCollect: number, userId: string): Promise<Task | null> {
+    return updateTask(taskId, {
+      sumToCollect,
+      updatedAt: Timestamp.now(),
+      updatedBy: userId
+    });
+  }
+
+  async getTaskById(taskId: string): Promise<Task | null> {
+    const tasks = await findByApartmentId(taskId);
+    return tasks.length > 0 ? tasks[0] : null;
+  }
+
+  groupTasksByDate(tasks: Task[]): Record<string, { checkouts: Task[]; checkins: Task[] }> {
+    const grouped: Record<string, { checkouts: Task[]; checkins: Task[] }> = {};
+    
+    tasks.forEach((task) => {
+      // Convert Timestamp to YYYY-MM-DD string format using our utility
+      const date = formatKievDate(task.dueDate, "YYYY-MM-DD");
+
+      if (!grouped[date]) {
+        grouped[date] = { checkouts: [], checkins: [] };
+      }
+      
+      if (task.type === TaskTypes.CHECKOUT) {
+        grouped[date].checkouts.push(task);
+      } else if (task.type === TaskTypes.CHECKIN) {
+        grouped[date].checkins.push(task);
+      }
+    });
+    
+    return grouped;
   }
 
   async getTasksByApartmentId(apartmentId: string): Promise<{ success: boolean; message?: string; tasks?: Task[] }> {
@@ -157,9 +145,44 @@ export class TaskService {
       };
     }
   }
-}
 
-export {
-  getTasksForUser,
-  updateTaskStatus,
-}; 
+  formatTasksMessage(dateString: string, checkouts: Task[], checkins: Task[]): string {
+    let msg = `\n\n📅 *${dateString}* 📅\n\n====================\n\n`;
+
+    if (checkouts.length > 0) {
+      msg += "🔥 *ВИЇЗДИ:* 🔥\n\n";
+      msg += "⚠️ *ВАЖЛИВО:* ⚠️\n";
+      msg += "Прибирання має бути завершено до 14:00\n\n";
+      for (const task of checkouts) {
+        msg += `🔴 *ID:* ${task.apartmentId}\n`;
+        msg += `🏠 *Адреса:* ${task.address}\n`;
+        msg += `👤 *Гість:* ${task.guestName || 'Unknown'}\n`;
+        msg += task.checkoutTime
+          ? `⏰ *Виїзд:* ${task.checkoutTime}\n`
+          : "⏰ *Виїзд:* не призначено\n";
+        msg += `💰 *Сума:* ${task.sumToCollect || 0}\n`;
+        msg += `🔑 *Ключів:* ${task.keysCount || 1}\n`;
+        msg += `📞 *Контакти:* ${task.guestPhone || 'Unknown'}\n\n`;
+      }
+    }
+
+    if (checkins.length > 0) {
+      msg += "✨ *ЗАЇЗДИ:* ✨\n\n";
+      msg += "⚠️ *ВАЖЛИВО:* ⚠️\n";
+      msg += "Квартира має бути готова до заїзду\n\n";
+      for (const task of checkins) {
+        msg += `🟢 *ID:* ${task.apartmentId}\n`;
+        msg += `🏠 *Адреса:* ${task.address}\n`;
+        msg += `👤 *Гість:* ${task.guestName || 'Unknown'}\n`;
+        msg += task.checkinTime
+          ? `⏰ *Заїзд:* ${task.checkinTime}\n`
+          : "⏰ *Заїзд:* не призначено\n";
+        msg += `💰 *Сума:* ${task.sumToCollect || 0}\n`;
+        msg += `🔑 *Ключів:* ${task.keysCount || 1}\n`;
+        msg += `📞 *Контакти:* ${task.guestPhone || 'Unknown'}\n\n`;
+      }
+    }
+
+    return msg;
+  }
+} 

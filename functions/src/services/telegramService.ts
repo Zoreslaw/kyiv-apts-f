@@ -228,14 +228,6 @@ export class TelegramService {
         }
         return;
         
-      case "Квартири":
-        if (isAdmin) {
-          await this.telegramCoordinator.handleAction(ctx, 'manage_apartments');
-        } else {
-          await ctx.reply("У вас немає доступу до цієї функції.");
-        }
-        return;
-        
       case "Головне меню":
         await this.telegramCoordinator.handleAction(ctx, 'back_to_main');
         return;

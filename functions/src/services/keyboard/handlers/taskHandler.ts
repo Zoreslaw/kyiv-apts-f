@@ -8,7 +8,6 @@ import {
   updateTaskTime, 
   findById as findTaskById 
 } from '../../../repositories/taskRepository';
-import { findById as findApartmentById } from '../../../repositories/apartmentRepository';
 import { TaskTypes } from '../../../utils/constants';
 import { formatDate, generateCalendarText, generateCalendarImage } from '../../../utils/calendarUtils';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -191,6 +190,9 @@ export class TaskHandler implements ActionHandler {
         return;
       }
       
+      // Clean up previous messages
+      await this.keyboardManager.cleanupMessages(ctx);
+      
       // Send tasks for each date
       for (const date of allDates) {
         const { checkouts, checkins } = grouped[date];
@@ -204,8 +206,30 @@ export class TaskHandler implements ActionHandler {
         
         const msg = this.taskService.formatTasksMessage(dateString, checkouts, checkins);
         
-        // Send message and store ID for later cleanup
-        const message = await ctx.reply(msg, { parse_mode: "Markdown" });
+        // Create keyboard options for this date's tasks
+        const allTasks = [...checkouts, ...checkins];
+        const keyboardOptions: TaskDisplayKeyboardOptions = {
+          tasks: allTasks,
+          type: allTasks[0]?.type === 'checkout' ? 'checkout' : 'checkin',
+          page: 1,
+          totalPages: 1,
+          forEditing: true
+        };
+        
+        // Create keyboard buttons
+        const keyboard = createTaskDisplayKeyboard(keyboardOptions);
+        
+        // Send message with inline keyboard
+        const message = await ctx.reply(msg, { 
+          parse_mode: "Markdown",
+          reply_markup: createInlineKeyboard({
+            id: 'tasks_list',
+            type: 'inline',
+            buttons: keyboard
+          })
+        });
+        
+        // Store message ID for cleanup
         this.keyboardManager.storeMessageId(ctx.userId, message.message_id);
       }
       
@@ -441,14 +465,8 @@ export class TaskHandler implements ActionHandler {
       
       await this.keyboardManager.cleanupMessages(ctx);
       
-      // Get apartment details if available
-      let apartmentAddress = '';
-      if (task.apartmentId) {
-        const apartment = await findApartmentById(task.apartmentId);
-        if (apartment) {
-          apartmentAddress = apartment.address;
-        }
-      }
+      // Get apartment address directly from task
+      const apartmentAddress = task.address || task.apartmentId;
       
       // Use our utility functions to generate the buttons and text
       const editButtons = createTaskEditButtons(task, 'checkin', apartmentAddress);
@@ -757,14 +775,8 @@ export class TaskHandler implements ActionHandler {
       
       await this.keyboardManager.cleanupMessages(ctx);
       
-      // Get apartment details if available
-      let apartmentAddress = '';
-      if (task.apartmentId) {
-        const apartment = await findApartmentById(task.apartmentId);
-        if (apartment) {
-          apartmentAddress = apartment.address;
-        }
-      }
+      // Get apartment address directly from task
+      const apartmentAddress = task.address || task.apartmentId;
       
       // Use our utility functions to generate the buttons and text
       const editButtons = createTaskEditButtons(task, 'checkout', apartmentAddress);

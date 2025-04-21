@@ -1,4 +1,6 @@
 import { InlineKeyboardMarkup, ReplyKeyboardMarkup } from 'telegraf/typings/core/types/typegram';
+import { TaskStatus } from '../utils/constants';
+import { Timestamp } from 'firebase-admin/firestore';
 
 /**
  * Keyboard Configuration System
@@ -10,7 +12,7 @@ import { InlineKeyboardMarkup, ReplyKeyboardMarkup } from 'telegraf/typings/core
 export interface KeyboardButtonConfig {
   text: string;                   // Button text
   action: string;                 // Action identifier (command or callback data)
-  role?: 'admin' | 'user' | 'all'; // Required role to see this button
+  role?: 'admin' | 'user' | 'cleaner' | 'all'; // Required role to see this button
   position?: {                    // Optional position in the keyboard
     row: number;                  // Row index (0-based)
     col: number;                  // Column index within row (0-based)
@@ -57,7 +59,6 @@ export const ADMIN_NAVIGATION: KeyboardConfig = {
     { text: 'Змінити заїзди', action: 'edit_checkins', role: 'admin', position: { row: 0, col: 0 } },
     { text: 'Змінити виїзди', action: 'edit_checkouts', role: 'admin', position: { row: 0, col: 1 } },
     { text: 'Користувачі', action: 'manage_users', role: 'admin', position: { row: 1, col: 0 } },
-    { text: 'Квартири', action: 'manage_apartments', role: 'admin', position: { row: 1, col: 1 } },
     { text: 'Головне меню', action: 'back_to_main', role: 'admin', position: { row: 2, col: 0 } }
   ]
 };
@@ -71,7 +72,6 @@ export const CHECKINS_NAVIGATION: KeyboardConfig = {
   buttons: [
     { text: 'Змінити виїзди', action: 'edit_checkouts', role: 'admin', position: { row: 0, col: 0 } },
     { text: 'Користувачі', action: 'manage_users', role: 'admin', position: { row: 1, col: 0 } },
-    { text: 'Квартири', action: 'manage_apartments', role: 'admin', position: { row: 1, col: 1 } },
     { text: 'Адмін панель', action: 'admin_panel', role: 'admin', position: { row: 2, col: 0 } },
     { text: 'Головне меню', action: 'back_to_main', role: 'admin', position: { row: 2, col: 1 } }
   ]
@@ -86,7 +86,6 @@ export const CHECKOUTS_NAVIGATION: KeyboardConfig = {
   buttons: [
     { text: 'Змінити заїзди', action: 'edit_checkins', role: 'admin', position: { row: 0, col: 0 } },
     { text: 'Користувачі', action: 'manage_users', role: 'admin', position: { row: 1, col: 0 } },
-    { text: 'Квартири', action: 'manage_apartments', role: 'admin', position: { row: 1, col: 1 } },
     { text: 'Адмін панель', action: 'admin_panel', role: 'admin', position: { row: 2, col: 0 } },
     { text: 'Головне меню', action: 'back_to_main', role: 'admin', position: { row: 2, col: 1 } }
   ]
@@ -116,7 +115,6 @@ export const USERS_NAVIGATION: KeyboardConfig = {
   buttons: [
     { text: 'Змінити заїзди', action: 'edit_checkins', role: 'admin', position: { row: 2, col: 0 } },
     { text: 'Змінити виїзди', action: 'edit_checkouts', role: 'admin', position: { row: 2, col: 1 } },
-    { text: 'Квартири', action: 'manage_apartments', role: 'admin', position: { row: 3, col: 0 } },
     { text: 'Адмін панель', action: 'admin_panel', role: 'admin', position: { row: 4, col: 0 } },
     { text: 'Головне меню', action: 'back_to_main', role: 'admin', position: { row: 4, col: 1 } }
   ]
@@ -181,7 +179,6 @@ export const ADMIN_MENU: KeyboardConfig = {
     { text: 'Змінити заїзди', action: 'edit_checkins', role: 'admin', position: { row: 0, col: 0 } },
     { text: 'Змінити виїзди', action: 'edit_checkouts', role: 'admin', position: { row: 0, col: 1 } },
     { text: 'Користувачі', action: 'manage_users', role: 'admin', position: { row: 1, col: 0 } },
-    { text: 'Квартири', action: 'manage_apartments', role: 'admin', position: { row: 1, col: 1 } },
     { text: 'Головне меню', action: 'show_menu', role: 'admin', position: { row: 2, col: 0 } }
   ]
 };
@@ -377,21 +374,6 @@ export function createTaskDisplayKeyboard(options: TaskDisplayKeyboardOptions): 
   const { tasks, type, page, totalPages, forEditing } = options;
   const buttons: KeyboardButtonConfig[] = [];
   
-  // Navigation buttons always at the top
-  buttons.push({ 
-    text: '◀️ Попередній день', 
-    action: `prev_${type}_day`, 
-    role: 'admin', 
-    position: { row: 0, col: 0 } 
-  });
-  
-  buttons.push({ 
-    text: 'Наступний день ▶️', 
-    action: `next_${type}_day`, 
-    role: 'admin', 
-    position: { row: 0, col: 1 } 
-  });
-  
   // Different handling for edit mode vs. view mode
   if (forEditing) {
     // Add task buttons in edit mode
@@ -406,7 +388,7 @@ export function createTaskDisplayKeyboard(options: TaskDisplayKeyboardOptions): 
           text: `🏠 ${task.apartmentId}${timeInfo}${guestInfo}`, 
           action: `edit_${type}_${task.id}`,
           role: 'admin',
-          position: { row: index + 1, col: 0 }
+          position: { row: index, col: 0 }
         });
       });
     } else {
@@ -415,54 +397,71 @@ export function createTaskDisplayKeyboard(options: TaskDisplayKeyboardOptions): 
         text: 'Немає завдань для редагування', 
         action: `cancel_${type}_edit`,
         role: 'admin',
-        position: { row: 1, col: 0 }
+        position: { row: 0, col: 0 }
       });
     }
     
     // Add cancel button at the end
-    const cancelRow = tasks.length > 0 ? tasks.length + 1 : 2;
+    const cancelRow = tasks.length > 0 ? tasks.length : 1;
     buttons.push({ 
       text: '❌ Скасувати', 
       action: `cancel_${type}_edit`, 
       role: 'admin', 
       position: { row: cancelRow, col: 0 } 
     });
-  } else {
-    // Add edit button in view mode (if there are tasks)
-    if (tasks.length > 0) {
+    
+    return buttons;
+  }
+  
+  // View mode - add navigation buttons
+  buttons.push({ 
+    text: '◀️ Попередній день', 
+    action: `prev_${type}_day`, 
+    role: 'admin', 
+    position: { row: 0, col: 0 } 
+  });
+  
+  buttons.push({ 
+    text: 'Наступний день ▶️', 
+    action: `next_${type}_day`, 
+    role: 'admin', 
+    position: { row: 0, col: 1 } 
+  });
+  
+  // Add edit button in view mode (if there are tasks)
+  if (tasks.length > 0) {
+    buttons.push({ 
+      text: '✏️ Редагувати', 
+      action: `show_${type}_edit_${page}`, 
+      role: 'admin', 
+      position: { row: 1, col: 0 } 
+    });
+  }
+  
+  // Add pagination buttons if needed
+  if (totalPages > 1) {
+    const paginationRow = tasks.length > 0 ? 2 : 1;
+    
+    if (page > 1) {
       buttons.push({ 
-        text: '✏️ Редагувати', 
-        action: `show_${type}_edit_${page}`, 
+        text: '⬅️', 
+        action: `${type}_page_${page - 1}`, 
         role: 'admin', 
-        position: { row: 1, col: 0 } 
+        position: { row: paginationRow, col: 0 } 
       });
     }
     
-    // Add pagination buttons if needed
-    if (totalPages > 1) {
-      const paginationRow = tasks.length > 0 ? 2 : 1;
-      
-      if (page > 1) {
-        buttons.push({ 
-          text: '⬅️', 
-          action: `${type}_page_${page - 1}`, 
-          role: 'admin', 
-          position: { row: paginationRow, col: 0 } 
-        });
-      }
-      
-      if (page < totalPages) {
-        buttons.push({ 
-          text: '➡️', 
-          action: `${type}_page_${page + 1}`, 
-          role: 'admin', 
-          position: { row: paginationRow, col: 1 } 
-        });
-      }
+    if (page < totalPages) {
+      buttons.push({ 
+        text: '➡️', 
+        action: `${type}_page_${page + 1}`, 
+        role: 'admin', 
+        position: { row: paginationRow, col: 1 } 
+      });
     }
   }
   
-  // Back button - always at the bottom
+  // Back button - always at the bottom in view mode
   const backRow = buttons.reduce((max, btn) => Math.max(max, btn.position?.row || 0), 0) + 1;
   buttons.push({ 
     text: '↩️ Назад', 
@@ -546,6 +545,42 @@ export function formatTaskDetailText(
     `*Оберіть параметр для редагування:*`;
 }
 
+// Cleaning tasks management keyboard
+export const CLEANING_TASKS_NAVIGATION: KeyboardConfig = {
+  id: 'cleaning_tasks_nav',
+  type: 'persistent',
+  resize: true,
+  buttons: [
+    { text: '📋 Мої завдання', action: 'show_my_tasks', role: 'all', position: { row: 0, col: 0 } },
+    { text: '🧹 Активні', action: 'show_active_tasks', role: 'cleaner', position: { row: 1, col: 0 } },
+    { text: '✅ Виконані', action: 'show_completed_tasks', role: 'cleaner', position: { row: 1, col: 1 } },
+    { text: '🏠 Головне меню', action: 'back_to_main', role: 'all', position: { row: 2, col: 0 } }
+  ]
+};
+
+// Cleaning task edit keyboard
+export const CLEANING_TASK_EDIT_KEYBOARD: KeyboardConfig = {
+  id: 'cleaning_task_edit',
+  type: 'inline',
+  buttons: [
+    { text: '🚨 Повідомити про проблему', action: 'report_problem', role: 'cleaner', position: { row: 0, col: 0 } },
+    { text: '🏠 Квартира дуже брудна', action: 'report_dirty', role: 'cleaner', position: { row: 1, col: 0 } },
+    { text: '✅ Прибирання завершено', action: 'complete_task', role: 'cleaner', position: { row: 2, col: 0 } },
+    { text: '↩️ Назад', action: 'back_to_tasks', role: 'cleaner', position: { row: 3, col: 0 } }
+  ]
+};
+
+// Cleaning task detail keyboard
+export const CLEANING_TASK_DETAIL_KEYBOARD: KeyboardConfig = {
+  id: 'cleaning_task_detail',
+  type: 'inline',
+  buttons: [
+    { text: '🚨 Повідомити про проблему', action: 'report_problem', role: 'cleaner', position: { row: 0, col: 0 } },
+    { text: '🏠 Квартира дуже брудна', action: 'report_dirty', role: 'cleaner', position: { row: 1, col: 0 } },
+    { text: '✅ Прибирання завершено', action: 'complete_task', role: 'cleaner', position: { row: 2, col: 0 } }
+  ]
+};
+
 /**
  * Collection of all keyboard configurations for easy access
  */
@@ -561,7 +596,10 @@ export const KEYBOARDS: Record<string, KeyboardConfig> = {
   task_list_nav: TASK_LIST_NAVIGATION,
   task_edit_buttons: TASK_EDIT_BUTTONS,
   // main_menu: MAIN_MENU,
-  admin_menu: ADMIN_MENU
+  admin_menu: ADMIN_MENU,
+  cleaning_tasks_nav: CLEANING_TASKS_NAVIGATION,
+  cleaning_task_edit: CLEANING_TASK_EDIT_KEYBOARD,
+  cleaning_task_detail: CLEANING_TASK_DETAIL_KEYBOARD
 };
 
 /**
@@ -657,4 +695,94 @@ export function createInlineKeyboard(
     });
 
   return { inline_keyboard };
-} 
+}
+
+// Add cleaning task display options
+export interface CleaningTaskDisplayOptions {
+  tasks: any[];
+  page: number;
+  totalPages: number;
+  status?: TaskStatus;
+  forEditing?: boolean;
+}
+
+/**
+ * Creates a keyboard for cleaning task display with proper buttons
+ */
+export function createCleaningTaskDisplayKeyboard(options: CleaningTaskDisplayOptions): KeyboardButtonConfig[] {
+  const { tasks, page, totalPages, status, forEditing } = options;
+  const buttons: KeyboardButtonConfig[] = [];
+  
+  // Add task buttons
+  if (tasks.length > 0) {
+    tasks.forEach((task, index) => {
+      const statusEmoji = task.status === TaskStatus.COMPLETED ? '✅' : 
+                         task.status === TaskStatus.IN_PROGRESS ? '⏳' : '⏰';
+      buttons.push({
+        text: `${statusEmoji} ${task.apartmentId}`,
+        action: `edit_cleaning_task_${task.id}`,
+        role: 'cleaner',
+        position: { row: index, col: 0 }
+      });
+    });
+  }
+  
+  // Add navigation buttons
+  if (totalPages > 1) {
+    const navRow = tasks.length + 1;
+    if (page > 1) {
+      buttons.push({
+        text: '⬅️ Попередня',
+        action: `cleaning_page_${page - 1}`,
+        role: 'cleaner',
+        position: { row: navRow, col: 0 }
+      });
+    }
+    if (page < totalPages) {
+      buttons.push({
+        text: 'Наступна ➡️',
+        action: `cleaning_page_${page + 1}`,
+        role: 'cleaner',
+        position: { row: navRow, col: 1 }
+      });
+    }
+  }
+  
+  return buttons;
+}
+
+/**
+ * Format cleaning task detail text for display
+ */
+export function formatCleaningTaskDetailText(task: any): string {
+  const statusEmoji = task.status === TaskStatus.COMPLETED ? '✅' : 
+                     task.status === TaskStatus.IN_PROGRESS ? '⏳' : '⏰';
+  
+  let text = `${statusEmoji} *${task.apartmentId}*\n`;
+  text += `📍 ${task.address}\n`;
+  if (task.dueDate) {
+    const date = task.dueDate instanceof Timestamp ? task.dueDate.toDate() : new Date(task.dueDate);
+    text += `⏰ Час прибирання: ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}\n`;
+  }
+  if (task.notes) {
+    text += `📝 ${task.notes}\n`;
+  }
+  
+  return text;
+}
+
+export const TASK_EDIT_KEYBOARD = {
+  inline_keyboard: [
+    [
+      { text: 'Edit Check-in', callback_data: 'edit_checkin' },
+      { text: 'Edit Check-out', callback_data: 'edit_checkout' }
+    ],
+    [
+      { text: 'Edit Keys', callback_data: 'edit_keys' },
+      { text: 'Edit Money', callback_data: 'edit_money' }
+    ],
+    [
+      { text: 'Mark Complete', callback_data: 'complete' }
+    ]
+  ]
+}; 

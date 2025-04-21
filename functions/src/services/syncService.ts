@@ -2,7 +2,6 @@ import axios from "axios";
 import { Timestamp } from "firebase-admin/firestore";
 import { findById, createReservation } from "../repositories/reservationRepository";
 import { findById as findTaskById, updateTask, createTask } from "../repositories/taskRepository";
-import { findAllApartments } from "../repositories/apartmentRepository";
 import { TaskTypes, TaskStatus, DEFAULT_CHECKIN_TIME, DEFAULT_CHECKOUT_TIME } from "../utils/constants";
 import { Apartment, IApartmentData } from "../models/Apartment";
 import { ITaskData, Task } from "../models/Task";
@@ -57,11 +56,6 @@ export async function syncReservationsAndTasks(): Promise<void> {
 
     // --- 2. Process and Upsert Reservations & Tasks --- //
     const processedReservationIds = new Set<string>();
-    const apartments = await findAllApartments();
-    const apartmentMap = new Map<string, Apartment>(
-      apartments.map((apt: Apartment) => [String(apt.id), apt])
-    );
-    logger.info(`[syncReservationsAndTasks] Loaded ${apartments.length} apartments`);
 
     const allDates = [...new Set([
       ...Object.keys(checkoutsResponse),
@@ -81,7 +75,6 @@ export async function syncReservationsAndTasks(): Promise<void> {
       for (const cmsCheckout of checkouts) {
         try {
           const reservationData = mapCmsToReservation(cmsCheckout, date, TaskTypes.CHECKOUT);
-          const apartment = apartmentMap.get(String(reservationData.apartmentId));
 
           // Upsert Reservation
           let reservation: Reservation;
@@ -103,7 +96,7 @@ export async function syncReservationsAndTasks(): Promise<void> {
           processedReservationIds.add(reservation.id);
 
           // Create or Update Checkout Task
-          await createOrUpdateTaskFromCmsData(reservation, cmsCheckout, TaskTypes.CHECKOUT, date, apartment);
+          await createOrUpdateTaskFromCmsData(reservation, cmsCheckout, TaskTypes.CHECKOUT, date);
         } catch (error) {
           logger.error(`[syncReservationsAndTasks] Error processing checkout for apartment ${cmsCheckout.apartment_id}:`, error);
         }
@@ -113,8 +106,6 @@ export async function syncReservationsAndTasks(): Promise<void> {
       for (const cmsCheckin of checkins) {
         try {
           const reservationData = mapCmsToReservation(cmsCheckin, date, TaskTypes.CHECKIN);
-          const apartment = apartmentMap.get(String(reservationData.apartmentId));
-
           // Upsert Reservation
           let reservation: Reservation;
           const existingReservation = await findById(reservationData.id!);
@@ -135,7 +126,7 @@ export async function syncReservationsAndTasks(): Promise<void> {
           processedReservationIds.add(reservation.id);
 
           // Create or Update Checkin Task
-          await createOrUpdateTaskFromCmsData(reservation, cmsCheckin, TaskTypes.CHECKIN, date, apartment);
+          await createOrUpdateTaskFromCmsData(reservation, cmsCheckin, TaskTypes.CHECKIN, date);
         } catch (error) {
           logger.error(`[syncReservationsAndTasks] Error processing checkin for apartment ${cmsCheckin.apartment_id}:`, error);
         }

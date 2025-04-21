@@ -50,13 +50,11 @@ export class KeyboardManager {
     // Default keyboard transitions for common actions
     'main_nav': {
       'admin_panel': 'admin_nav',
-      'show_tasks': 'main_nav'
     },
     'admin_nav': {
       'edit_checkins': 'checkins_nav',
       'edit_checkouts': 'checkouts_nav',
       'manage_users': 'users_nav',
-      'manage_apartments': 'apartments_nav',
       'back_to_main': 'main_nav'
     },
     'checkins_nav': {

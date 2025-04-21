@@ -10,9 +10,7 @@ import {
   findAllUsers,
   findByTelegramId,
   updateUser,
-  createUser,
-  deleteUser,
-  IUserData
+  deleteUser
 } from '../../../repositories/userRepository';
 
 /**
@@ -38,11 +36,6 @@ export class UserHandler implements ActionHandler {
     
     if (actionData === 'list_users') {
       await this.listUsers(ctx);
-      return;
-    }
-    
-    if (actionData === 'add_user') {
-      await this.startAddUser(ctx);
       return;
     }
     
@@ -164,34 +157,49 @@ export class UserHandler implements ActionHandler {
       // Create navigation buttons
       const buttons: KeyboardButtonConfig[] = [];
       
-      // Previous page button
+      // Edit button
+      buttons.push({
+        text: '✏️ Редагувати',
+        action: `user_page_${page}`,
+        role: 'admin',
+        position: { row: 0, col: 0 }
+      });
+      
+      // Navigation buttons
       if (page > 1) {
         buttons.push({ 
           text: '⬅️ Попередня', 
           action: 'user_prev_page', 
           role: 'admin', 
-          position: { row: 0, col: 0 } 
+          position: { row: 1, col: 0 } 
         });
       }
       
-      // Edit button
-      buttons.push({ 
-        text: '✏️ Редагувати', 
-        action: `user_page_${page}`, 
-        role: 'admin', 
-        position: { row: 0, col: 1 } 
-      });
-      
-      // Next page button
       if (page < totalPages) {
         buttons.push({ 
           text: 'Наступна ➡️', 
           action: 'user_next_page', 
           role: 'admin', 
-          position: { row: 0, col: 2 } 
+          position: { row: 1, col: 1 } 
         });
       }
       
+      // Back button
+      buttons.push({
+        text: '↩️ Назад',
+        action: 'admin_panel',
+        role: 'admin',
+        position: { row: 2, col: 0 }
+      });
+      
+      // Store current page in state
+      const state = this.keyboardManager.getUserState(ctx.userId);
+      if (!state.currentData) {
+        state.currentData = {};
+      }
+      state.currentData.userListPage = page;
+      
+      // Send message with inline keyboard
       const message = await ctx.reply(text, {
         parse_mode: 'Markdown',
         reply_markup: createInlineKeyboard(buttons, true)
@@ -199,14 +207,6 @@ export class UserHandler implements ActionHandler {
       
       // Store for cleanup
       this.keyboardManager.storeMessageId(ctx.userId, message.message_id);
-      
-      // Store current page in state
-      const state = this.keyboardManager.getUserState(ctx.userId);
-      if (!state.currentData) {
-        state.currentData = {};
-      }
-      
-      state.currentData.userListPage = page;
       
     } catch (error) {
       logger.error(`[UserHandler] Error listing users:`, error);
@@ -570,31 +570,6 @@ export class UserHandler implements ActionHandler {
   }
   
   /**
-   * Start process of adding a new user
-   */
-  private async startAddUser(ctx: TelegramContext): Promise<void> {
-    await this.keyboardManager.cleanupMessages(ctx);
-    
-    // Set state for text handler
-    const state = this.keyboardManager.getUserState(ctx.userId);
-    if (!state.currentData) {
-      state.currentData = {};
-    }
-    
-    state.currentData.addingUser = true;
-    state.currentData.addUserStep = 'telegramId';
-    
-    const message = await ctx.reply(
-      '*Додавання нового користувача*\n\n' +
-      'Введіть Telegram ID користувача:',
-      { parse_mode: 'Markdown' }
-    );
-    
-    // Store for cleanup
-    this.keyboardManager.storeMessageId(ctx.userId, message.message_id);
-  }
-  
-  /**
    * Start process of deleting a user
    */
   private async startDeleteUser(ctx: TelegramContext): Promise<void> {
@@ -602,165 +577,5 @@ export class UserHandler implements ActionHandler {
     const page = state.currentData?.userListPage || 1;
     
     await this.showUserPage(ctx, page);
-  }
-  
-  /**
-   * Process text input for user operations
-   */
-  public async processUserText(ctx: TelegramContext, text: string): Promise<boolean> {
-    const state = this.keyboardManager.getUserState(ctx.userId);
-    
-    if (!state.currentData?.addingUser) {
-      return false;
-    }
-    
-    try {
-      switch (state.currentData.addUserStep) {
-        case 'telegramId':
-          // Validate Telegram ID
-          if (!/^\d+$/.test(text)) {
-            await ctx.reply('❌ Неправильний формат Telegram ID. Введіть числове значення.');
-            return true;
-          }
-          
-          // Check if user already exists
-          const existingUser = await findByTelegramId(text);
-          if (existingUser) {
-            await ctx.reply(`❌ Користувач з Telegram ID ${text} вже існує.`);
-            state.currentData.addingUser = false;
-            return true;
-          }
-          
-          // Store Telegram ID and move to next step
-          state.currentData.newUser = {
-            telegramId: text,
-            chatId: text,
-          };
-          state.currentData.addUserStep = 'firstName';
-          
-          await ctx.reply('Введіть ім\'я користувача:');
-          return true;
-          
-        case 'firstName':
-          // Store first name and move to next step
-          if (!state.currentData.newUser) {
-            state.currentData.newUser = {} as any;
-          }
-          
-          state.currentData.newUser.firstName = text;
-          state.currentData.addUserStep = 'lastName';
-          
-          await ctx.reply('Введіть прізвище користувача (або напишіть "немає" для пропуску):');
-          return true;
-          
-        case 'lastName':
-          // Store last name and move to next step
-          if (!state.currentData.newUser) {
-            state.currentData.addingUser = false;
-            await ctx.reply('❌ Помилка при створенні користувача. Спробуйте знову.');
-            return true;
-          }
-          
-          state.currentData.newUser.lastName = text === 'немає' ? '' : text;
-          state.currentData.addUserStep = 'username';
-          
-          await ctx.reply('Введіть username користувача (без @) або напишіть "немає":');
-          return true;
-          
-        case 'username':
-          // Store username and move to next step
-          if (!state.currentData.newUser) {
-            state.currentData.addingUser = false;
-            await ctx.reply('❌ Помилка при створенні користувача. Спробуйте знову.');
-            return true;
-          }
-          
-          state.currentData.newUser.username = text === 'немає' ? '' : text;
-          state.currentData.addUserStep = 'role';
-          
-          // Ask for role
-          const roleMessage = await ctx.reply(
-            '*Виберіть роль користувача:*\n\n' +
-            '1️⃣ - Адміністратор\n' +
-            '2️⃣ - Клінер\n' +
-            '3️⃣ - Звичайний користувач',
-            { parse_mode: 'Markdown' }
-          );
-          
-          this.keyboardManager.storeMessageId(ctx.userId, roleMessage.message_id);
-          return true;
-          
-        case 'role':
-          // Process role selection
-          let role: "admin" | "cleaner" | "user";
-          
-          switch (text) {
-            case '1':
-            case '1️⃣':
-              role = UserRoles.ADMIN;
-              break;
-            case '2':
-            case '2️⃣':
-              role = UserRoles.CLEANER;
-              break;
-            case '3':
-            case '3️⃣':
-              role = 'user'; // Regular user
-              break;
-            default:
-              await ctx.reply('❌ Неправильний вибір. Введіть 1, 2 або 3.');
-              return true;
-          }
-          
-          if (!state.currentData.newUser) {
-            state.currentData.addingUser = false;
-            await ctx.reply('❌ Помилка при створенні користувача. Спробуйте знову.');
-            return true;
-          }
-          
-          // Create the user
-          const userData: IUserData = {
-            telegramId: state.currentData.newUser.telegramId,
-            chatId: state.currentData.newUser.chatId,
-            firstName: state.currentData.newUser.firstName,
-            lastName: state.currentData.newUser.lastName,
-            username: state.currentData.newUser.username,
-            role: role,
-            status: 'active',
-            createdAt: new Date(),
-            updatedAt: new Date()
-          };
-          
-          const newUser = await createUser(userData);
-          
-          if (newUser) {
-            await ctx.reply(`✅ Користувача успішно створено!\n\n` +
-              `👤 *${newUser.firstName} ${newUser.lastName || ''}*\n` +
-              `${role === UserRoles.ADMIN ? '👑' : role === UserRoles.CLEANER ? '🧹' : '👤'} Роль: ${role}\n` +
-              `🆔 Telegram ID: ${newUser.telegramId}\n`,
-              { parse_mode: 'Markdown' }
-            );
-            
-            // Return to users list
-            await this.listUsers(ctx);
-          } else {
-            await ctx.reply('❌ Не вдалося створити користувача. Спробуйте пізніше.');
-          }
-          
-          // Reset state
-          state.currentData.addingUser = false;
-          state.currentData.newUser = undefined;
-          return true;
-      }
-      
-      return false;
-    } catch (error) {
-      logger.error(`[UserHandler] Error processing user text:`, error);
-      await ctx.reply('Помилка при обробці введених даних. Спробуйте пізніше.');
-      
-      // Reset state
-      state.currentData.addingUser = false;
-      return true;
-    }
   }
 } 
