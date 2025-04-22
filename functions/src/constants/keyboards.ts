@@ -373,103 +373,64 @@ export interface TaskDisplayKeyboardOptions {
 export function createTaskDisplayKeyboard(options: TaskDisplayKeyboardOptions): KeyboardButtonConfig[] {
   const { tasks, type, page, totalPages, forEditing } = options;
   const buttons: KeyboardButtonConfig[] = [];
-  
-  // Different handling for edit mode vs. view mode
-  if (forEditing) {
-    // Add task buttons in edit mode
-    if (tasks.length > 0) {
-      tasks.forEach((task, index) => {
-        const timeInfo = type === 'checkin' 
-          ? (task.checkinTime ? ` ⏰ ${task.checkinTime}` : '')
-          : (task.checkoutTime ? ` ⏰ ${task.checkoutTime}` : '');
-        const guestInfo = task.guestName ? ` 👤 ${task.guestName.split(' ')[0]}` : '';
-        
-        buttons.push({
-          text: `🏠 ${task.apartmentId}${timeInfo}${guestInfo}`, 
-          action: `edit_${type}_${task.id}`,
-          role: 'admin',
-          position: { row: index, col: 0 }
-        });
-      });
-    } else {
-      // No tasks message
-      buttons.push({
-        text: 'Немає завдань для редагування', 
-        action: `cancel_${type}_edit`,
-        role: 'admin',
-        position: { row: 0, col: 0 }
-      });
-    }
-    
-    // Add cancel button at the end
-    const cancelRow = tasks.length > 0 ? tasks.length : 1;
-    buttons.push({ 
-      text: '❌ Скасувати', 
-      action: `cancel_${type}_edit`, 
-      role: 'admin', 
-      position: { row: cancelRow, col: 0 } 
+
+  // Add task buttons
+  tasks.forEach((task, index) => {
+    buttons.push({
+      text: `${task.apartmentId} - ${task.address}`,
+      action: `show_${type}_edit_${task.id}`,
+      role: 'all',
+      position: { row: index, col: 0 }
     });
-    
-    return buttons;
-  }
-  
-  // View mode - add navigation buttons
-  buttons.push({ 
-    text: '◀️ Попередній день', 
-    action: `prev_${type}_day`, 
-    role: 'admin', 
-    position: { row: 0, col: 0 } 
   });
-  
-  buttons.push({ 
-    text: 'Наступний день ▶️', 
-    action: `next_${type}_day`, 
-    role: 'admin', 
-    position: { row: 0, col: 1 } 
-  });
-  
-  // Add edit button in view mode (if there are tasks)
-  if (tasks.length > 0) {
-    buttons.push({ 
-      text: '✏️ Редагувати', 
-      action: `show_${type}_edit_${page}`, 
-      role: 'admin', 
-      position: { row: 1, col: 0 } 
-    });
-  }
-  
-  // Add pagination buttons if needed
+
+  // Navigation row
+  const navRow = tasks.length;
   if (totalPages > 1) {
-    const paginationRow = tasks.length > 0 ? 2 : 1;
-    
     if (page > 1) {
-      buttons.push({ 
-        text: '⬅️', 
-        action: `${type}_page_${page - 1}`, 
-        role: 'admin', 
-        position: { row: paginationRow, col: 0 } 
+      buttons.push({
+        text: '⬅️ Попередня',
+        action: `${type}_page_${page - 1}`,
+        role: 'all',
+        position: { row: navRow, col: 0 }
       });
     }
-    
+
+    buttons.push({
+      text: `📄 ${page}/${totalPages}`,
+      action: 'noop',
+      role: 'all',
+      position: { row: navRow, col: 1 }
+    });
+
     if (page < totalPages) {
-      buttons.push({ 
-        text: '➡️', 
-        action: `${type}_page_${page + 1}`, 
-        role: 'admin', 
-        position: { row: paginationRow, col: 1 } 
+      buttons.push({
+        text: 'Наступна ➡️',
+        action: `${type}_page_${page + 1}`,
+        role: 'all',
+        position: { row: navRow, col: 2 }
       });
     }
   }
-  
-  // Back button - always at the bottom in view mode
-  const backRow = buttons.reduce((max, btn) => Math.max(max, btn.position?.row || 0), 0) + 1;
-  buttons.push({ 
-    text: '↩️ Назад', 
-    action: 'admin_panel', 
-    role: 'admin', 
-    position: { row: backRow, col: 0 } 
+
+  // Control buttons row
+  const controlRow = navRow + 1;
+  if (forEditing) {
+    buttons.push({
+      text: '❌ Скасувати',
+      action: `cancel_${type}_edit`,
+      role: 'all',
+      position: { row: controlRow, col: 0 }
+    });
+  }
+
+  buttons.push({
+    text: '🏠 Головне меню',
+    action: 'back_to_main',
+    role: 'all',
+    position: { row: controlRow, col: forEditing ? 1 : 0 }
   });
-  
+
   return buttons;
 }
 

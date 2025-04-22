@@ -210,7 +210,7 @@ export class TaskHandler implements ActionHandler {
         const allTasks = [...checkouts, ...checkins];
         const keyboardOptions: TaskDisplayKeyboardOptions = {
           tasks: allTasks,
-          type: allTasks[0]?.type === 'checkout' ? 'checkout' : 'checkin',
+          type: allTasks[0]?.type === TaskTypes.CHECKOUT ? TaskTypes.CHECKOUT : TaskTypes.CHECKIN,
           page: 1,
           totalPages: 1,
           forEditing: true

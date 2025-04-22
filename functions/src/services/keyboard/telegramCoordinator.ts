@@ -58,8 +58,11 @@ export class TelegramCoordinator {
     this.keyboardManager = new KeyboardManager();
     this.actionRegistry = new ActionRegistry();
     
-    // Add handlers
+    // Initialize handlers
     const taskHandler = new TaskHandler(taskService, this.keyboardManager);
+    this.handlers.push(taskHandler);
+    
+    // Add handlers
     const userHandler = new UserHandler(this.keyboardManager);
     // const apartmentHandler = new ApartmentHandler(this.keyboardManager);
     
@@ -70,9 +73,9 @@ export class TelegramCoordinator {
     ];
     
     // Register handlers with action registry
-    this.actionRegistry.registerHandler(taskHandler);
-    this.actionRegistry.registerHandler(userHandler);
-    // this.actionRegistry.registerHandler(apartmentHandler);
+    this.handlers.forEach(handler => {
+      this.actionRegistry.registerHandler(handler);
+    });
   }
   
   /**
