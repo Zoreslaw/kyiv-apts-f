@@ -1,8 +1,5 @@
 {
   "projects": {
-    "default": "kyiv-apts-local-test",
-    "bot": "kyiv-apts-local-test"
-  },
-  "targets": {},
-  "etags": {}
+    "default": "kyiv-apts-f"
+  }
 }
