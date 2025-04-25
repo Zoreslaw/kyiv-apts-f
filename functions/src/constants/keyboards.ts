@@ -519,6 +519,16 @@ export const CLEANING_TASKS_NAVIGATION: KeyboardConfig = {
   ]
 };
 
+export const TASK_DATE_NAVIGATION: KeyboardConfig = {
+  id: 'task_date_nav',
+  type: 'inline',
+  resize: true,
+  buttons: [
+    { text: '📅 Сьогодні', action: 'show_tasks_today', role: 'all', position: { row: 0, col: 0 } },
+    { text: '📅 Завтра', action: 'show_tasks_tomorrow', role: 'all', position: { row: 0, col: 1 } }
+  ]
+};
+
 // Cleaning task edit keyboard
 export const CLEANING_TASK_EDIT_KEYBOARD: KeyboardConfig = {
   id: 'cleaning_task_edit',
@@ -560,7 +570,8 @@ export const KEYBOARDS: Record<string, KeyboardConfig> = {
   admin_menu: ADMIN_MENU,
   cleaning_tasks_nav: CLEANING_TASKS_NAVIGATION,
   cleaning_task_edit: CLEANING_TASK_EDIT_KEYBOARD,
-  cleaning_task_detail: CLEANING_TASK_DETAIL_KEYBOARD
+  cleaning_task_detail: CLEANING_TASK_DETAIL_KEYBOARD,
+  task_date_nav: TASK_DATE_NAVIGATION
 };
 
 /**
@@ -730,6 +741,15 @@ export function formatCleaningTaskDetailText(task: any): string {
   }
   
   return text;
+}
+
+export function createTaskDateSelectorKeyboard(): InlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: '📅 Сьогодні', callback_data: 'show_tasks_today' }],
+      [{ text: '📅 Завтра', callback_data: 'show_tasks_tomorrow' }]
+    ]
+  };
 }
 
 export const TASK_EDIT_KEYBOARD = {

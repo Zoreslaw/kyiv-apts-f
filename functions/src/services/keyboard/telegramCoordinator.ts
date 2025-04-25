@@ -1,7 +1,11 @@
 import { logger } from 'firebase-functions';
 import { KeyboardManager, TelegramContext, UserState } from './keyboardManager';
 import { TaskHandler } from './handlers/taskHandler';
+import { MyTasksHandler } from "./handlers/myTasksHandler";
 import { UserHandler } from './handlers/userHandler';
+import { createTaskDateSelectorKeyboard } from '../../constants/keyboards';
+
+
 // import { ApartmentHandler } from './handlers/apartmentHandler';
 import { TaskService } from '../taskService';
 import {
@@ -50,7 +54,11 @@ export class TelegramCoordinator {
   private keyboardManager: KeyboardManager;
   private actionRegistry: ActionRegistry;
   private handlers: ActionHandler[] = [];
-  
+
+  public resolveActionFromText(text: string, userId: string): string | null {
+    return this.keyboardManager.resolveActionFromText(text, userId);
+  }
+
   constructor(
     private taskService: TaskService,
     private userService?: ITaskService
@@ -61,13 +69,17 @@ export class TelegramCoordinator {
     // Initialize handlers
     const taskHandler = new TaskHandler(taskService, this.keyboardManager);
     this.handlers.push(taskHandler);
-    
+
+    const myTasksHandler = new MyTasksHandler(taskService, this.keyboardManager);
+    this.handlers.push(myTasksHandler);
+
     // Add handlers
     const userHandler = new UserHandler(this.keyboardManager);
     // const apartmentHandler = new ApartmentHandler(this.keyboardManager);
     
     this.handlers = [
       taskHandler,
+      myTasksHandler,
       userHandler
     //   apartmentHandler
     ];
@@ -114,16 +126,54 @@ export class TelegramCoordinator {
       return true;
     }
 
-    // Handle show_tasks explicitly to display user tasks
     if (actionData === 'show_tasks') {
-      logger.info(`[TelegramCoordinator] Handling show_tasks action explicitly`);
-      const taskHandler = this.handlers.find(h => h instanceof TaskHandler) as TaskHandler;
-      if (taskHandler && 'showTasks' in taskHandler) {
-        await (taskHandler as any).showTasks(ctx);
+      const myTaskHandler = this.handlers.find(h => h instanceof MyTasksHandler) as MyTasksHandler;
+      if (myTaskHandler) {
+        await myTaskHandler.showTaskSelectorWithSummary(ctx);
       }
       return true;
     }
-    
+
+    if (actionData === 'show_tasks_today') {
+      const myTaskHandler = this.handlers.find(h => h instanceof MyTasksHandler) as MyTasksHandler;
+      if (myTaskHandler) {
+        const today = new Date();
+        await myTaskHandler.showTasksForDate(ctx, today);
+      }
+      return true;
+    }
+
+    if (actionData === 'show_tasks_tomorrow') {
+      const myTaskHandler = this.handlers.find(h => h instanceof MyTasksHandler) as MyTasksHandler;
+      if (myTaskHandler) {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        await myTaskHandler.showTasksForDate(ctx, tomorrow);
+      }
+      return true;
+    }
+
+    const pageMatch = /^show_tasks_page_(\d+)$/.exec(actionData);
+    if (pageMatch) {
+      const page = parseInt(pageMatch[1], 10);
+      const myTaskHandler = this.handlers.find(h => h instanceof MyTasksHandler) as MyTasksHandler;
+      if (myTaskHandler) {
+        logger.info(`[Coordinator] Pagination for page ${page}`);
+        await myTaskHandler.showTaskSelectorWithSummary(ctx, page);
+      }
+      return true;
+    }
+
+    const taskDetailMatch = /^task_detail_(\w+)$/.exec(actionData);
+    if (taskDetailMatch) {
+      const taskId = taskDetailMatch[1];
+      const myTaskHandler = this.handlers.find(h => h instanceof MyTasksHandler) as MyTasksHandler;
+      if (myTaskHandler) {
+        await myTaskHandler.showTaskDetails(ctx, taskId);
+      }
+      return true;
+    }
+
     // Handle cleaning task actions
     if (actionData === 'show_my_tasks' || actionData === 'show_cleaning_tasks') {
       await this.showMyCleaningTasks(ctx);
@@ -247,7 +297,7 @@ export class TelegramCoordinator {
       }
       return true;
     }
-    
+
     // Check if we can process this action via keyboard transitions
     const didTransition = await this.keyboardManager.processAction(ctx, actionData);
     if (didTransition) {
@@ -296,15 +346,15 @@ export class TelegramCoordinator {
     
     return false;
   }
-  
+
   /**
    * Show the main menu
    */
-  private async showMenu(ctx: TelegramContext): Promise<void> {
-    await this.keyboardManager.cleanupMessages(ctx);
+  private async showMenu(ctx: TelegramContext, preserveMessages: boolean = false): Promise<void> {
+    //await this.keyboardManager.cleanupMessages(ctx);
     await this.keyboardManager.showKeyboard(ctx, 'main_nav');
   }
-  
+
   /**
    * Show help information
    */

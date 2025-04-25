@@ -17,7 +17,8 @@ export enum UserRoles {
 export enum TaskTypes {
   CHECKIN = 'checkin',
   CHECKOUT = 'checkout',
-  CLEANING = 'cleaning'
+  CLEANING = 'cleaning',
+  INSPECTION = 'inspection',
 }
 
 // Task statuses

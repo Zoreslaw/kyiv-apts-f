@@ -1,4 +1,4 @@
-import { Timestamp } from "firebase-admin/firestore";
+import {getFirestore, Timestamp} from "firebase-admin/firestore";
 import { findTasksByUserId, updateTask, findByApartmentId } from "../repositories/taskRepository";
 import { Task, ITaskData } from "../models/Task";
 import { TaskStatus, TaskTypes } from "../utils/constants";
@@ -12,22 +12,37 @@ export class TaskService {
       const chatIdStr = String(chatId);
       logger.info(`[TaskService] Starting getTasksForUser for chatId=${chatIdStr}`);
 
-      logger.info(`[TaskService] Found user with id=${chatIdStr}, type=${typeof chatId}`);
-      const tasks = await findTasksByUserId(chatIdStr);
-      logger.info(`[TaskService] Found ${tasks.length} tasks for user ${chatIdStr}`);
-
-      if (tasks.length === 0) {
-        logger.info(`[TaskService] No upcoming tasks found for user ${chatIdStr}`);
+      const user = await findOrCreateUser({ id: chatIdStr, first_name: "", username: "" });
+      if (!user || !user.assignedApartmentIds || user.assignedApartmentIds.length === 0) {
+        logger.warn(`[TaskService] User ${chatIdStr} has no assigned apartments.`);
         return {
           success: false,
-          message: "На тебе не додано жодних завдань на найближчі дні. :("
+          message: "На тебе не додано жодних квартир. Звернись до адміністратора.",
         };
       }
 
-      logger.info(`[TaskService] Successfully retrieved ${tasks.length} tasks for user ${chatIdStr}`);
+      logger.info(`[TaskService] User ${chatIdStr} has ${user.assignedApartmentIds.length} assigned apartments: ${user.assignedApartmentIds.join(", ")}`);
+
+      let allTasks: Task[] = [];
+
+      for (const aptId of user.assignedApartmentIds) {
+        const foundTasks = await findByApartmentId(aptId);
+        logger.info(`[TaskService] Found ${foundTasks.length} tasks for apartment ${aptId}`);
+        allTasks.push(...foundTasks);
+      }
+
+      logger.info(`[TaskService] Total tasks collected for user ${chatIdStr}: ${allTasks.length}`);
+
+      if (allTasks.length === 0) {
+        return {
+          success: false,
+          message: "Немає запланованих завдань на найближчий час.",
+        };
+      }
+
       return {
         success: true,
-        tasks: tasks
+        tasks: allTasks,
       };
     } catch (err) {
       logger.error("[TaskService] Error in getTasksForUser:", err);
@@ -41,6 +56,44 @@ export class TaskService {
         message: "Помилка при отриманні завдань. Спробуйте пізніше."
       };
     }
+  }
+
+  async updateCleaningTimesForAllTasks(): Promise<void> {
+    const db = getFirestore();
+    const tasksSnapshot = await db.collection("tasks").get();
+
+    logger.info(`[TaskService] Found ${tasksSnapshot.size} tasks for cleaning time update`);
+
+    for (const doc of tasksSnapshot.docs) {
+      const data = doc.data();
+      const dueDateRaw = data.dueDate;
+
+      if (!dueDateRaw) continue;
+
+      const dueDate = dueDateRaw instanceof Timestamp ? dueDateRaw.toDate() : new Date(dueDateRaw);
+
+      let cleaningTimeStart: Date | null = null;
+      let cleaningTimeEnd: Date | null = null;
+
+      if (data.type === TaskTypes.CHECKOUT) {
+        cleaningTimeStart = dueDate;
+        cleaningTimeEnd = new Date(dueDate.getTime() + 3 * 60 * 60 * 1000);
+      } else if (data.type === TaskTypes.CHECKIN) {
+        cleaningTimeEnd = dueDate;
+        cleaningTimeStart = new Date(dueDate.getTime() - 1 * 60 * 60 * 1000);
+      } else {
+        continue;
+      }
+
+      await doc.ref.update({
+        cleaningTimeStart: cleaningTimeStart.toISOString(),
+        cleaningTimeEnd: cleaningTimeEnd.toISOString()
+      });
+
+      logger.info(`[TaskService] Updated ${doc.id} with cleaning time`);
+    }
+
+    logger.info(`[TaskService] Cleaning time updates completed`);
   }
 
   async updateTaskStatus(taskId: string, status: TaskStatus, userId: string): Promise<Task | null> {

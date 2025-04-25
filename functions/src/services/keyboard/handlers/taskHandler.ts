@@ -12,15 +12,15 @@ import { TaskTypes } from '../../../utils/constants';
 import { formatDate, generateCalendarText, generateCalendarImage } from '../../../utils/calendarUtils';
 import { Timestamp } from 'firebase-admin/firestore';
 import {
-  createCheckInListKeyboard, 
-  createCheckOutListKeyboard, 
-  createApartmentEditKeyboard, 
+  createCheckInListKeyboard,
+  createCheckOutListKeyboard,
+  createApartmentEditKeyboard,
   createInlineKeyboard,
   KeyboardButtonConfig,
   createTaskDisplayKeyboard,
   TaskDisplayKeyboardOptions,
   createTaskEditButtons,
-  formatTaskDetailText
+  formatTaskDetailText, TASK_DATE_NAVIGATION
 } from '../../../constants/keyboards';
 import { Task } from '../../../models/Task';
 
@@ -39,12 +39,6 @@ export class TaskHandler implements ActionHandler {
    */
   async handleAction(ctx: TelegramContext, actionData?: string): Promise<void> {
     if (!actionData) return;
-    
-    // Direct action handlers
-    if (actionData === 'show_tasks') {
-      await this.showTasks(ctx);
-      return;
-    }
     
     if (actionData === 'edit_checkins') {
       await this.showCheckIns(ctx);
@@ -163,84 +157,7 @@ export class TaskHandler implements ActionHandler {
       return;
     }
   }
-  
-  /**
-   * Show user tasks
-   */
-  private async showTasks(ctx: TelegramContext): Promise<void> {
-    try {
-      logger.info(`[TaskHandler] Showing tasks for user ${ctx.userId}`);
-      
-      const result = await this.taskService.getTasksForUser(ctx.userId);
-      
-      if (!result.success || !result.tasks) {
-        await ctx.reply(result.message || "Немає завдань на найближчі дні.", { 
-          parse_mode: "Markdown" 
-        });
-        return;
-      }
-      
-      const grouped = this.taskService.groupTasksByDate(result.tasks);
-      const allDates = Object.keys(grouped).sort();
-      
-      if (allDates.length === 0) {
-        await ctx.reply("Немає завдань на найближчі дні.", { 
-          parse_mode: "Markdown" 
-        });
-        return;
-      }
-      
-      // Clean up previous messages
-      await this.keyboardManager.cleanupMessages(ctx);
-      
-      // Send tasks for each date
-      for (const date of allDates) {
-        const { checkouts, checkins } = grouped[date];
-        
-        if (!checkouts.length && !checkins.length) {
-          continue;
-        }
-        
-        const [y, m, d] = date.split("-");
-        const dateString = `${d}.${m}.${y}`;
-        
-        const msg = this.taskService.formatTasksMessage(dateString, checkouts, checkins);
-        
-        // Create keyboard options for this date's tasks
-        const allTasks = [...checkouts, ...checkins];
-        const keyboardOptions: TaskDisplayKeyboardOptions = {
-          tasks: allTasks,
-          type: allTasks[0]?.type === TaskTypes.CHECKOUT ? TaskTypes.CHECKOUT : TaskTypes.CHECKIN,
-          page: 1,
-          totalPages: 1,
-          forEditing: true
-        };
-        
-        // Create keyboard buttons
-        const keyboard = createTaskDisplayKeyboard(keyboardOptions);
-        
-        // Send message with inline keyboard
-        const message = await ctx.reply(msg, { 
-          parse_mode: "Markdown",
-          reply_markup: createInlineKeyboard({
-            id: 'tasks_list',
-            type: 'inline',
-            buttons: keyboard
-          })
-        });
-        
-        // Store message ID for cleanup
-        this.keyboardManager.storeMessageId(ctx.userId, message.message_id);
-      }
-      
-    } catch (error) {
-      logger.error(`[TaskHandler] Error showing tasks:`, error);
-      await ctx.reply("Помилка при отриманні завдань. Спробуйте пізніше.", { 
-        parse_mode: "Markdown" 
-      });
-    }
-  }
-  
+
   /**
    * Show check-ins management
    */

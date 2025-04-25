@@ -22,12 +22,16 @@ export interface TelegramContext {
     };
     caption?: string;
   }) => Promise<{ message_id: number }>;
+  deleteMessage: (messageId: number) => Promise<void>;
+  messageIdToEdit?: number;
 }
 
 // Define user state interface
 export interface UserState {
   currentKeyboard: string;
   messageIds: number[];
+  infoMessageId?: number;
+  taskMessageIds?: number[];
   currentData?: any;
   userListPage?: number;
   editingUser?: any;
@@ -106,6 +110,35 @@ export class KeyboardManager {
   }
 
   /**
+   * Resolve action from button text based on the current keyboard
+   */
+  resolveActionFromText(text: string, userId: string | number): string | null {
+    const state = this.getUserState(userId);
+    const keyboardId = state.currentKeyboard;
+    const keyboard = KEYBOARDS[keyboardId];
+
+    if (!keyboard) return null;
+
+    const button = keyboard.buttons.find(btn => btn.text === text);
+    return button?.action || null;
+  }
+
+  public async cleanupTaskMessagesOnly(ctx: TelegramContext): Promise<void> {
+    const state = this.getUserState(ctx.userId);
+    const taskMessages = state.taskMessageIds || [];
+
+    for (const messageId of taskMessages) {
+      try {
+        await ctx.deleteMessage(messageId);
+      } catch (err) {
+        logger.warn(`[KeyboardManager] Failed to delete task message ${messageId}`, err);
+      }
+    }
+
+    state.taskMessageIds = [];
+  }
+
+  /**
    * Transition to a new keyboard based on action
    * Returns the new keyboard ID or null if no transition found
    */
@@ -134,13 +167,17 @@ export class KeyboardManager {
   /**
    * Store message ID for later cleanup
    */
-  storeMessageId(userId: string | number, messageId: number): void {
+  storeMessageId(userId: string | number, messageId: number, type: 'info' | 'task' = 'task'): void {
     const state = this.getUserState(userId);
-    state.messageIds.push(messageId);
-    
-    // Keep only last 5 message IDs to avoid excessive storage
-    if (state.messageIds.length > 5) {
-      state.messageIds = state.messageIds.slice(-5);
+
+    if (type === 'info') {
+      state.infoMessageId = messageId;
+    } else {
+      if (!state.taskMessageIds) state.taskMessageIds = [];
+      state.taskMessageIds.push(messageId);
+      if (state.taskMessageIds.length > 10) {
+        state.taskMessageIds = state.taskMessageIds.slice(-10);
+      }
     }
   }
 
@@ -162,13 +199,17 @@ export class KeyboardManager {
    */
   async cleanupMessages(ctx: TelegramContext): Promise<void> {
     const state = this.getUserState(ctx.userId);
-    
-    for (const messageId of state.messageIds) {
-      await this.deleteMessage(ctx, messageId);
+    const taskIds = state.taskMessageIds || [];
+
+    for (const messageId of taskIds) {
+      try {
+        await ctx.deleteMessage(messageId);
+      } catch (err) {
+        logger.warn(`[KeyboardManager] Failed to delete task message ${messageId}`, err);
+      }
     }
-    
-    // Clear the stored message IDs
-    state.messageIds = [];
+
+    state.taskMessageIds = [];
   }
 
   /**

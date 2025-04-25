@@ -9,6 +9,8 @@ export interface ITaskData {
     type: TaskTypes;
     status: TaskStatus;
     assignedStaffId?: string | null;
+    cleaningTimeStart?: string | Timestamp | Date | null;
+    cleaningTimeEnd?: string | Timestamp | Date | null;
     dueDate: string | Date | Timestamp;
     notes?: string | null;
     createdAt: Timestamp | Date;
@@ -33,6 +35,8 @@ export class Task implements ITaskData {
     type: TaskTypes;
     status: TaskStatus;
     assignedStaffId: string | null;
+    cleaningTimeStart?: string | Timestamp | Date | null;
+    cleaningTimeEnd?: string | Timestamp | Date | null;
     dueDate: string | Date | Timestamp;
     notes: string | null;
     createdAt: Timestamp | Date;
@@ -56,6 +60,8 @@ export class Task implements ITaskData {
         this.type = data.type;
         this.status = data.status;
         this.assignedStaffId = data.assignedStaffId || null;
+        this.cleaningTimeStart = data.cleaningTimeStart;
+        this.cleaningTimeEnd = data.cleaningTimeEnd;
         this.dueDate = data.dueDate;
         this.notes = data.notes || null;
         this.createdAt = data.createdAt;

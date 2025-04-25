@@ -78,10 +78,11 @@ export class TelegramService {
   /**
    * Create a TelegramContext object for a specific user
    */
-  private createContext(chatId: string | number, userId: string | number): TelegramContext {
+  private createContext(chatId: string | number, userId: string | number, extras?: { messageIdToEdit?: number }): TelegramContext {
     return {
       chatId,
       userId,
+      messageIdToEdit: extras?.messageIdToEdit,
       reply: async (text: string, options?: any) => {
         // Handle message deletion option
         if (options?.delete_message_id) {
@@ -145,6 +146,16 @@ export class TelegramService {
           options?.parse_mode, 
           options?.reply_markup
         );
+      },
+      deleteMessage: async (messageId: number) => {
+        try {
+          await axios.post(`${TELEGRAM_API}/deleteMessage`, {
+            chat_id: chatId,
+            message_id: messageId
+          });
+        } catch (err) {
+          logger.warn(`Failed to delete message ${messageId}:`, err);
+        }
       }
     };
   }
@@ -248,7 +259,8 @@ export class TelegramService {
     }
 
     // Try to handle as a direct action
-    const isActionHandled = await this.telegramCoordinator.handleAction(ctx, text);
+    const mappedAction = this.telegramCoordinator.resolveActionFromText(text, userId);
+    const isActionHandled = await this.telegramCoordinator.handleAction(ctx, mappedAction || text);
     if (isActionHandled) {
       return;
     }
@@ -291,15 +303,25 @@ export class TelegramService {
   /**
    * Handle callback queries (button clicks)
    */
-  async handleCallbackQuery(callbackQuery: { data: string; from: { id: number }; message: { chat: { id: number } } }): Promise<void> {
+  async handleCallbackQuery(callbackQuery: {
+    data: string;
+    from: { id: number };
+    message: {
+      chat: { id: number };
+      message_id: number
+    }
+  }): Promise<void>
+  {
     const { data, from, message } = callbackQuery;
     const chatId = String(message.chat.id);
     const userId = String(from.id);
     
     logger.info(`[TelegramService] Handling callback query: ${data} from user ${userId}`);
-    
-    const ctx = this.createContext(chatId, userId);
-    
+
+    const ctx = this.createContext(chatId, userId, {
+      messageIdToEdit: callbackQuery.message.message_id
+    });
+
     // Pass to coordinator for handling
     await this.telegramCoordinator.handleAction(ctx, data);
   }
@@ -339,7 +361,7 @@ export class TelegramService {
 
       // Create context and show welcome message with keyboard
       const ctx = this.createContext(chatId, userId);
-      
+
       // Welcome message
       await ctx.reply(`*Вітаю, ${firstName || 'користувачу'}!*\n\nЯ бот для управління завданнями.\n\nВикористовуйте меню нижче для навігації:`, {
         parse_mode: "Markdown"
