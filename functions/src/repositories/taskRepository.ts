@@ -7,7 +7,6 @@ import { TaskTypes } from "../utils/constants";
 import { Timestamp } from "firebase-admin/firestore";
 import { findByTelegramId } from "./userRepository";
 import { UserRoles } from "../utils/constants";
-import { findByUserId as findCleaningAssignmentByUserId } from "./cleaningAssignmentRepository";
 import { toKievDate } from "../utils/dateTime";
 
 const TASKS_COLLECTION = "tasks";
@@ -24,8 +23,7 @@ async function findTasksByUserId(userId: string): Promise<Task[]> {
   const { start: startTimestamp, end: endTimestamp } = getKievDateRange(0, 7);
   logger.info(`Searching for tasks between ${startTimestamp.toDate()} and ${endTimestamp.toDate()}`);
 
-  const cleaningAssignment = await findCleaningAssignmentByUserId(userId);
-  const assignedApartmentIds = cleaningAssignment?.apartmentIds || [];
+  const assignedApartmentIds = user.assignedApartmentIds || [];
   logger.info(`User ${userId} has ${assignedApartmentIds.length} assigned apartments: ${assignedApartmentIds.join(', ')}`);
 
   let snap;
@@ -147,11 +145,6 @@ async function updateTaskInfo(
       };
     }
 
-    // Check if user has permission to modify this task
-    const taskData = doc.data();
-    const userAssignment = await findCleaningAssignmentByUserId(userId);
-    const assignedApartments = userAssignment?.apartmentIds || [];
-
     // Get user's role
     const user = await findByTelegramId(userId);
     if (!user) {
@@ -160,6 +153,10 @@ async function updateTaskInfo(
         message: "Користувача не знайдено.",
       };
     }
+
+    // Check if user has permission to modify this task
+    const taskData = doc.data();
+    const assignedApartments = user.assignedApartmentIds || [];
 
     // Check if user is admin or has the apartment assigned
     const isAdmin = user.role === UserRoles.ADMIN;

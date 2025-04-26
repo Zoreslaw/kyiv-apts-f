@@ -7,7 +7,6 @@ import { findOrCreateUser } from "./userService";
 import { FunctionExecutionService } from "./functionExecutionService";
 import { syncReservationsAndTasks } from "./syncService";
 import { findByTelegramId } from "../repositories/userRepository";
-import { findByUserId } from "../repositories/cleaningAssignmentRepository";
 import { UserRoles } from "../utils/constants";
 import { TelegramCoordinator } from "./keyboard/telegramCoordinator";
 import { TelegramContext } from "./keyboard/keyboardManager";
@@ -266,8 +265,7 @@ export class TelegramService {
     }
 
     // Handle AI processing for other messages
-    const assignment = await findByUserId(userId);
-    const assignedApartments = assignment?.apartmentIds || [];
+    const assignedApartments = user?.assignedApartmentIds || [];
     const currentTasks = (await this.taskService.getTasksForUser(userId)).tasks || [];
 
     const result = await this.aiService.processMessage(text, {

@@ -5,7 +5,6 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { User } from '../../../models/User';
 import { UserRoles } from '../../../utils/constants';
 import { createInlineKeyboard, KeyboardButtonConfig } from '../../../constants/keyboards';
-import { findByUserId } from '../../../repositories/cleaningAssignmentRepository';
 import { 
   findAllUsers,
   findByTelegramId,
@@ -306,8 +305,7 @@ export class UserHandler implements ActionHandler {
       await this.keyboardManager.cleanupMessages(ctx);
       
       // Get apartment assignments
-      const assignment = await findByUserId(telegramId);
-      const assignedApartments = assignment?.apartmentIds || [];
+      const assignedApartments = user.assignedApartmentIds || [];
       
       // Create role buttons
       const roleButtons: KeyboardButtonConfig[] = [

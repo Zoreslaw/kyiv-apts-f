@@ -1,8 +1,7 @@
 import { logger } from "firebase-functions";
 import { Timestamp } from "firebase-admin/firestore";
 import { updateTask } from "../repositories/taskRepository";
-import { findByTelegramId as findUserById, findByUsernameOrName } from "../repositories/userRepository";
-import { findByUserId as findAssignmentByUserId, createAssignment, updateAssignment } from "../repositories/cleaningAssignmentRepository";
+import { findByTelegramId as findUserById, findByUsernameOrName, updateUser } from "../repositories/userRepository";
 import { TaskService } from "./taskService";
 import { TaskTimeUpdate, TaskInfoUpdate, ApartmentAssignment, UserApartmentsQuery } from './aiService';
 
@@ -209,28 +208,19 @@ export class FunctionExecutionService {
         };
       }
 
-      const assignment = await findAssignmentByUserId(user.id);
-      if (!assignment) {
-        await createAssignment({
-          userId: user.id,
-          apartmentIds,
-          createdAt: Timestamp.now(),
-          updatedAt: Timestamp.now()
-        });
-        return {
-          success: true,
-          message: `Квартири ${apartmentIds.join(', ')} успішно призначені користувачу.`
-        };
-      }
-
+      // Get current assigned apartments
+      const currentApartmentIds = user.assignedApartmentIds || [];
+      
+      // Update the apartment list based on action
       const updatedApartmentIds = action === 'add'
-        ? [...new Set([...assignment.apartmentIds, ...apartmentIds])]
-        : assignment.apartmentIds.filter(id => !apartmentIds.includes(id));
+        ? [...new Set([...currentApartmentIds, ...apartmentIds])]
+        : currentApartmentIds.filter((id: string) => !apartmentIds.includes(id));
 
-      await updateAssignment(assignment.id, {
-        apartmentIds: updatedApartmentIds,
-        updatedAt: Timestamp.now()
+      // Update user with new apartment IDs
+      await updateUser(user.id, {
+        assignedApartmentIds: updatedApartmentIds,
       });
+      
       return {
         success: true,
         message: `Список квартир користувача успішно оновлено.`
@@ -270,24 +260,17 @@ export class FunctionExecutionService {
         };
       }
 
-      const assignment = await findAssignmentByUserId(user.id);
-      if (!assignment) {
+      const assignedApartmentIds = user.assignedApartmentIds || [];
+      if (assignedApartmentIds.length === 0) {
         return {
           success: false,
           message: 'Користувач не має призначених квартир.'
         };
       }
 
-      if (!isAdmin && user.id !== assignment.userId) {
-        return {
-          success: false,
-          message: 'У вас немає прав для перегляду квартир цього користувача.'
-        };
-      }
-
       return {
         success: true,
-        message: `Призначені квартири: ${assignment.apartmentIds.join(', ')}`
+        message: `Призначені квартири: ${assignedApartmentIds.join(', ')}`
       };
     } catch (error) {
       logger.error('[Function] Error showing user apartments:', {
