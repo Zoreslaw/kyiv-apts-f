@@ -5,7 +5,6 @@ import { MyTasksHandler } from "./handlers/myTasksHandler";
 import { UserHandler } from './handlers/userHandler';
 import { TaskService } from '../taskService';
 import { ActionHandler, ActionHandlerRegistry } from './actionHandler';
-import { CleaningTaskHandler } from './handlers/cleaningTaskHandler';
 import { MenuHandler } from './handlers/menuHandler'; 
 
 // Task service interface to allow for dependency injection
@@ -61,16 +60,13 @@ export class TelegramCoordinator {
     const menuHandler = new MenuHandler(this.keyboardManager);
     const userHandler = new UserHandler(this.keyboardManager);
     const taskHandler = new TaskHandler(this.taskService, this.keyboardManager);
-    const myTasksHandler = new MyTasksHandler(this.taskService, this.keyboardManager);
-    const cleaningTaskHandler = new CleaningTaskHandler(this.taskService, this.keyboardManager);
-    
+    const myTasksHandler = new MyTasksHandler(this.taskService, this.keyboardManager);    
     // Store handlers for cleanup
     this.handlers = [
       menuHandler,
       userHandler,
       taskHandler,
       myTasksHandler,
-      cleaningTaskHandler
     ];
     
     // Register common actions
@@ -82,6 +78,7 @@ export class TelegramCoordinator {
     
     // User management actions
     this.actionRegistry.registerDirectHandler('manage_users', userHandler);
+    this.actionRegistry.registerDirectHandler('back_to_users', userHandler);
     this.actionRegistry.registerRegexHandler(/^user/, userHandler);
     this.actionRegistry.registerRegexHandler(/^edit_user_/, userHandler);
     this.actionRegistry.registerRegexHandler(/^confirm_delete_user_/, userHandler);
@@ -93,14 +90,31 @@ export class TelegramCoordinator {
     this.actionRegistry.registerDirectHandler('edit_checkouts', taskHandler);
     this.actionRegistry.registerRegexHandler(/^checkin_/, taskHandler);
     this.actionRegistry.registerRegexHandler(/^checkout_/, taskHandler);
+    this.actionRegistry.registerRegexHandler(/^show_checkin_edit_/, taskHandler);
+    this.actionRegistry.registerRegexHandler(/^show_checkout_edit_/, taskHandler);
+    
+    // Add regex handlers for action formats with embedded task IDs
+    this.actionRegistry.registerRegexHandler(/^edit_checkin_time_/, taskHandler);
+    this.actionRegistry.registerRegexHandler(/^edit_checkin_keys_/, taskHandler);
+    this.actionRegistry.registerRegexHandler(/^edit_checkin_money_/, taskHandler);
+    this.actionRegistry.registerRegexHandler(/^edit_checkout_time_/, taskHandler);
+    this.actionRegistry.registerRegexHandler(/^edit_checkout_keys_/, taskHandler);
+    this.actionRegistry.registerRegexHandler(/^edit_checkout_money_/, taskHandler);
+    
+    // Add navigation action handlers
+    this.actionRegistry.registerDirectHandler('prev_checkin_day', taskHandler);
+    this.actionRegistry.registerDirectHandler('next_checkin_day', taskHandler);
+    this.actionRegistry.registerDirectHandler('prev_checkout_day', taskHandler);
+    this.actionRegistry.registerDirectHandler('next_checkout_day', taskHandler);
+    this.actionRegistry.registerDirectHandler('cancel_checkin_edit', taskHandler);
+    this.actionRegistry.registerDirectHandler('cancel_checkout_edit', taskHandler);
+    this.actionRegistry.registerDirectHandler('back_to_checkins', taskHandler);
+    this.actionRegistry.registerDirectHandler('back_to_checkouts', taskHandler);
     
     // My tasks actions
     this.actionRegistry.registerDirectHandler('show_tasks', myTasksHandler);
     this.actionRegistry.registerRegexHandler(/^show_tasks_/, myTasksHandler);
     this.actionRegistry.registerRegexHandler(/^task_detail_/, myTasksHandler);
-    
-    // Cleaning task actions
-    this.actionRegistry.registerRegexHandler(/^(my|active|completed|page|edit|complete|start|cancel|back|report)_/, cleaningTaskHandler);
   }
 
   /**
@@ -117,16 +131,64 @@ export class TelegramCoordinator {
     try {
       logger.info(`[TelegramCoordinator] Handling action: ${actionData} for user ${ctx.userId}`);
       
-      // Try to process keyboard transition
+      // Only reset edit state for actions that shouldn't inherit previous task selection
       const state = this.keyboardManager.getUserState(ctx.userId);
+      
+      // Create a list of actions that should preserve task editing state
+      const preserveTaskStateActions = [
+        'show_checkin_edit_', 'show_checkout_edit_'
+      ];
+      
+      // Don't reset task selection for edit actions with task IDs either
+      const preserveRegexPatterns = [
+        /^edit_checkin_time_/,
+        /^edit_checkin_keys_/,
+        /^edit_checkin_money_/,
+        /^edit_checkout_time_/,
+        /^edit_checkout_keys_/,
+        /^edit_checkout_money_/
+      ];
+      
+      // Don't reset task selection for edit actions
+      const shouldResetTaskState = !(
+        preserveTaskStateActions.some(prefix => 
+          actionData.startsWith(prefix) || actionData === prefix
+        ) ||
+        preserveRegexPatterns.some(regex => regex.test(actionData))
+      );
+      
+      if (state && state.currentData && shouldResetTaskState) {
+        logger.debug(`[TelegramCoordinator] Resetting edit state for action: ${actionData}`);
+        state.currentData.editMode = false;
+        state.currentData.editingField = null;
+        state.currentData.selectedTaskId = null;
+      } else {
+        logger.debug(`[TelegramCoordinator] Preserving edit state for action: ${actionData}`);
+      }
+      
+      // Try to process keyboard transition
       const shouldTransition = await this.keyboardManager.processAction(ctx, actionData);
       
-      if (shouldTransition) {
+      // For most actions, if there was a transition, we're done
+      // But for certain actions, we need to also delegate to the handler
+      const mustDelegateActions = [
+        'edit_checkins', 'edit_checkouts',
+        'prev_checkin_day', 'next_checkin_day',
+        'prev_checkout_day', 'next_checkout_day',
+        'back_to_checkins', 'back_to_checkouts',
+        'back_to_users', 'manage_users', 'cancel_user_edit'
+      ];
+      
+      if (shouldTransition && !mustDelegateActions.includes(actionData)) {
         logger.debug(`[TelegramCoordinator] Keyboard transition handled action: ${actionData}`);
         return true;
       }
       
-      // Otherwise, delegate to registered handlers
+      if (shouldTransition) {
+        logger.debug(`[TelegramCoordinator] Keyboard transition occurred, but still delegating action: ${actionData}`);
+      }
+      
+      // Delegate to registered handlers
       return await this.actionRegistry.handleAction(ctx, actionData);
     } catch (error) {
       logger.error(`[TelegramCoordinator] Error handling action ${actionData}:`, error);

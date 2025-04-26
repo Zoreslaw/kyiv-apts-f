@@ -40,6 +40,9 @@ export class TaskHandler implements ActionHandler {
   async handleAction(ctx: TelegramContext, actionData?: string): Promise<void> {
     if (!actionData) return;
     
+    logger.debug(`[TaskHandler] Handling action: ${actionData}`);
+    
+    // Handle direct actions
     if (actionData === 'edit_checkins') {
       await this.showCheckIns(ctx);
       return;
@@ -80,36 +83,6 @@ export class TaskHandler implements ActionHandler {
       return;
     }
     
-    if (actionData === 'edit_checkin_time') {
-      await this.editCheckInTime(ctx);
-      return;
-    }
-    
-    if (actionData === 'edit_checkin_keys') {
-      await this.editCheckInKeys(ctx);
-      return;
-    }
-    
-    if (actionData === 'edit_checkin_money') {
-      await this.editCheckInMoney(ctx);
-      return;
-    }
-    
-    if (actionData === 'edit_checkout_time') {
-      await this.editCheckOutTime(ctx);
-      return;
-    }
-    
-    if (actionData === 'edit_checkout_keys') {
-      await this.editCheckOutKeys(ctx);
-      return;
-    }
-    
-    if (actionData === 'edit_checkout_money') {
-      await this.editCheckOutMoney(ctx);
-      return;
-    }
-    
     if (actionData === 'back_to_checkins') {
       await this.backToCheckIns(ctx);
       return;
@@ -117,6 +90,77 @@ export class TaskHandler implements ActionHandler {
     
     if (actionData === 'back_to_checkouts') {
       await this.backToCheckOuts(ctx);
+      return;
+    }
+
+    // Handle actions with embedded task IDs (new format)
+    const editTimeMatch = /^edit_(checkin|checkout)_time_(.+)$/.exec(actionData);
+    if (editTimeMatch) {
+      const type = editTimeMatch[1];
+      const taskId = editTimeMatch[2];
+      const state = this.keyboardManager.getUserState(ctx.userId);
+      if (!state.currentData) state.currentData = {};
+      state.currentData.selectedTaskId = taskId;
+      
+      logger.info(`[TaskHandler] Editing ${type} time for task: ${taskId}`);
+      
+      if (type === 'checkin') {
+        await this.editCheckInTime(ctx);
+      } else {
+        await this.editCheckOutTime(ctx);
+      }
+      return;
+    }
+    
+    const editKeysMatch = /^edit_(checkin|checkout)_keys_(.+)$/.exec(actionData);
+    if (editKeysMatch) {
+      const type = editKeysMatch[1];
+      const taskId = editKeysMatch[2];
+      const state = this.keyboardManager.getUserState(ctx.userId);
+      if (!state.currentData) state.currentData = {};
+      state.currentData.selectedTaskId = taskId;
+      
+      logger.info(`[TaskHandler] Editing ${type} keys for task: ${taskId}`);
+      
+      if (type === 'checkin') {
+        await this.editCheckInKeys(ctx);
+      } else {
+        await this.editCheckOutKeys(ctx);
+      }
+      return;
+    }
+    
+    const editMoneyMatch = /^edit_(checkin|checkout)_money_(.+)$/.exec(actionData);
+    if (editMoneyMatch) {
+      const type = editMoneyMatch[1];
+      const taskId = editMoneyMatch[2];
+      const state = this.keyboardManager.getUserState(ctx.userId);
+      if (!state.currentData) state.currentData = {};
+      state.currentData.selectedTaskId = taskId;
+      
+      logger.info(`[TaskHandler] Editing ${type} money for task: ${taskId}`);
+      
+      if (type === 'checkin') {
+        await this.editCheckInMoney(ctx);
+      } else {
+        await this.editCheckOutMoney(ctx);
+      }
+      return;
+    }
+    
+    // Handle complex patterns
+    
+    // Handle check-in edit mode
+    if (actionData.startsWith('show_checkin_edit_')) {
+      const match = { input: actionData } as RegExpExecArray;
+      await this.showCheckInEditMode(ctx, match);
+      return;
+    }
+    
+    // Handle check-out edit mode
+    if (actionData.startsWith('show_checkout_edit_')) {
+      const match = { input: actionData } as RegExpExecArray;
+      await this.showCheckOutEditMode(ctx, match);
       return;
     }
     
@@ -127,21 +171,9 @@ export class TaskHandler implements ActionHandler {
       return;
     }
     
-    const showCheckInEditMatch = /^show_checkin_edit_(\d+)$/.exec(actionData);
-    if (showCheckInEditMatch) {
-      await this.showCheckInEditMode(ctx, showCheckInEditMatch);
-      return;
-    }
-    
     const checkOutPageMatch = /^checkout_page_(\d+)$/.exec(actionData);
     if (checkOutPageMatch) {
       await this.handleCheckOutPage(ctx, checkOutPageMatch);
-      return;
-    }
-    
-    const showCheckOutEditMatch = /^show_checkout_edit_(\d+)$/.exec(actionData);
-    if (showCheckOutEditMatch) {
-      await this.showCheckOutEditMode(ctx, showCheckOutEditMatch);
       return;
     }
     
@@ -156,6 +188,8 @@ export class TaskHandler implements ActionHandler {
       await this.editCheckOut(ctx, editCheckOutMatch);
       return;
     }
+    
+    logger.warn(`[TaskHandler] Unhandled action: ${actionData}`);
   }
 
   /**
@@ -173,6 +207,9 @@ export class TaskHandler implements ActionHandler {
     // Default to today if no date is set
     state.currentData.date = state.currentData.date || new Date();
     state.currentData.page = state.currentData.page || 1;
+    
+    // EXPLICITLY SHOW THE PERSISTENT KEYBOARD
+    await this.keyboardManager.showKeyboard(ctx, 'checkins_nav', 'Керування заїздами');
     
     // Show check-ins list with navigation
     await this.sendCheckInsList(ctx, state.currentData.date, state.currentData.page, false);
@@ -289,6 +326,9 @@ export class TaskHandler implements ActionHandler {
     // Clean up existing messages
     await this.keyboardManager.cleanupMessages(ctx);
     
+    // Ensure persistent keyboard is shown
+    await this.keyboardManager.showKeyboard(ctx, 'checkins_nav', 'Керування заїздами');
+    
     // Send the updated list directly
     await this.sendCheckInsList(ctx, state.currentData.date, state.currentData.page, false);
   }
@@ -297,24 +337,66 @@ export class TaskHandler implements ActionHandler {
    * Show check-in edit mode
    */
   public async showCheckInEditMode(ctx: TelegramContext, match: RegExpExecArray): Promise<void> {
-    const page = parseInt(match[1]);
-    const state = this.keyboardManager.getUserState(ctx.userId);
-    
-    if (!state.currentData) {
-      state.currentData = {};
+    try {
+      logger.info(`[TaskHandler] Showing check-in edit mode with action: ${match.input}`);
+      
+      // Extract task ID from the complex string
+      // Format: show_checkin_edit_FULL_TASK_ID
+      // Where FULL_TASK_ID might be something like: 361_2025-04-06_checkin_checkin
+      const parts = match.input?.split('_') || [];
+      logger.debug(`[TaskHandler] Parsed action parts: ${JSON.stringify(parts)}`);
+      
+      if (parts.length < 4) {
+        logger.error(`[TaskHandler] Invalid check-in edit action format: ${match.input}`);
+        await ctx.reply('Помилка: Неправильний формат дії редагування.');
+        return;
+      }
+      
+      // The full task ID is everything after "show_checkin_edit_"
+      // We need to reconstruct it because it contains underscores
+      const taskId = parts.slice(3).join('_');
+      logger.debug(`[TaskHandler] Extracted full taskId: ${taskId}`);
+      
+      // Default page to 1
+      const page = 1;
+      const state = this.keyboardManager.getUserState(ctx.userId);
+      
+      if (!state.currentData) {
+        state.currentData = {};
+      }
+      
+      state.currentData.page = page;
+      state.currentData.date = state.currentData.date || new Date();
+      state.currentData.selectedTaskId = taskId;
+      state.currentData.editMode = true;
+      
+      logger.debug(`[TaskHandler] Updated state: editMode=${state.currentData.editMode}, selectedTaskId=${state.currentData.selectedTaskId}`);
+      
+      // Clean up messages but don't change the persistent keyboard
+      await this.keyboardManager.cleanupMessages(ctx);
+      
+      // Show the task edit view
+      // Create a properly shaped RegExpExecArray object
+      const fakeRegex = /^edit_checkin_(.+)$/;
+      const fakeInput = `edit_checkin_${taskId}`;
+      logger.debug(`[TaskHandler] Creating regex match with input: ${fakeInput}`);
+      
+      const fakeMatch = fakeRegex.exec(fakeInput);
+      if (!fakeMatch) {
+        logger.error(`[TaskHandler] Failed to create regex match for: ${fakeInput}`);
+        await ctx.reply('Помилка при підготовці редагування заїзду.');
+        return;
+      }
+      
+      logger.debug(`[TaskHandler] Regex match created successfully: ${JSON.stringify(fakeMatch)}`);
+      
+      // Call the edit method directly
+      logger.debug(`[TaskHandler] Calling editCheckIn with taskId: ${taskId}`);
+      await this.editCheckIn(ctx, fakeMatch as RegExpExecArray);
+    } catch (error) {
+      logger.error(`[TaskHandler] Error in showCheckInEditMode:`, error);
+      await ctx.reply('Помилка при відображенні редагування заїзду. Спробуйте пізніше.');
     }
-    
-    state.currentData.page = page;
-    state.currentData.date = state.currentData.date || new Date();
-    
-    // Just update the state to indicate we're in edit mode WITHOUT changing the keyboard
-    state.currentData.editMode = true;
-    
-    // Clean up messages but don't change the persistent keyboard
-    await this.keyboardManager.cleanupMessages(ctx);
-    
-    // Send the list with edit buttons
-    await this.sendCheckInsList(ctx, state.currentData.date, page, true);
   }
   
   /**
@@ -361,24 +443,50 @@ export class TaskHandler implements ActionHandler {
    * Edit a specific check-in task
    */
   private async editCheckIn(ctx: TelegramContext, match: RegExpExecArray): Promise<void> {
-    const taskId = match[1];
-    const state = this.keyboardManager.getUserState(ctx.userId);
-    
-    if (!state.currentData) {
-      state.currentData = {};
-    }
-    
-    state.currentData.selectedTaskId = taskId;
-    state.currentData.editType = 'checkin';
-    
     try {
-      // Get the task from the repository
-      const task: Task | null = await findTaskById(taskId);
+      logger.info(`[TaskHandler] Editing check-in with match: ${JSON.stringify(match)}`);
+      
+      const taskId = match[1];
+      logger.debug(`[TaskHandler] Extracted taskId from match: ${taskId}`);
+      
+      const state = this.keyboardManager.getUserState(ctx.userId);
+      
+      if (!state.currentData) {
+        state.currentData = {};
+      }
+      
+      state.currentData.selectedTaskId = taskId;
+      state.currentData.editType = 'checkin';
+      
+      logger.debug(`[TaskHandler] Updated state for edit: editType=${state.currentData.editType}, selectedTaskId=${state.currentData.selectedTaskId}`);
+      
+      // Get the task directly by ID - these are unique in Firestore
+      logger.debug(`[TaskHandler] Finding task with exact ID: ${taskId}`);
+      let task = await findTaskById(taskId);
       
       if (!task) {
-        await ctx.reply(`Помилка: Завдання з ID ${taskId} не знайдено.`);
+        logger.error(`[TaskHandler] Task not found with ID: ${taskId}`);
+        
+        // Try to fetch tasks to show available options
+        const currentDate = new Date();
+        const tasks = await getTasksForDate(currentDate, TaskTypes.CHECKIN);
+        
+        // More detailed error message with available task information
+        let errorMsg = `Помилка: Завдання з ID ${taskId} не знайдено.\n\n`;
+        errorMsg += `Доступні заїзди на сьогодні: ${tasks.length}\n`;
+        
+        if (tasks.length > 0) {
+          errorMsg += "Можливо ви хотіли вибрати одне з цих:\n";
+          tasks.slice(0, 3).forEach((t, i) => {
+            errorMsg += `${i+1}. ID: ${t.id}, Адреса: ${t.address || t.apartmentId}\n`;
+          });
+        }
+        
+        await ctx.reply(errorMsg);
         return;
       }
+      
+      logger.debug(`[TaskHandler] Found task: ${JSON.stringify(task)}`);
       
       await this.keyboardManager.cleanupMessages(ctx);
       
@@ -386,14 +494,19 @@ export class TaskHandler implements ActionHandler {
       const apartmentAddress = task.address || task.apartmentId;
       
       // Use our utility functions to generate the buttons and text
+      logger.debug(`[TaskHandler] Creating edit buttons for task`);
       const editButtons = createTaskEditButtons(task, 'checkin', apartmentAddress);
       const detailText = formatTaskDetailText(task, 'checkin', apartmentAddress);
+      
+      logger.debug(`[TaskHandler] Sending edit message with keyboard`);
       
       // Send message with inline keyboard
       const message = await ctx.reply(detailText, {
         parse_mode: 'Markdown',
         reply_markup: createInlineKeyboard(editButtons, true)
       });
+      
+      logger.debug(`[TaskHandler] Edit message sent successfully: ${message.message_id}`);
       
       // Store for cleanup
       this.keyboardManager.storeMessageId(ctx.userId, message.message_id);
@@ -483,6 +596,9 @@ export class TaskHandler implements ActionHandler {
     // Default to today if no date is set
     state.currentData.date = state.currentData.date || new Date();
     state.currentData.page = state.currentData.page || 1;
+    
+    // EXPLICITLY SHOW THE PERSISTENT KEYBOARD
+    await this.keyboardManager.showKeyboard(ctx, 'checkouts_nav', 'Керування виїздами');
     
     // Show check-outs list with navigation
     await this.sendCheckOutsList(ctx, state.currentData.date, state.currentData.page, false);
@@ -617,6 +733,9 @@ export class TaskHandler implements ActionHandler {
     // Clean up existing messages
     await this.keyboardManager.cleanupMessages(ctx);
     
+    // Ensure persistent keyboard is shown
+    await this.keyboardManager.showKeyboard(ctx, 'checkouts_nav', 'Керування виїздами');
+    
     // Send the updated list directly
     await this.sendCheckOutsList(ctx, state.currentData.date, state.currentData.page, false);
   }
@@ -625,24 +744,66 @@ export class TaskHandler implements ActionHandler {
    * Show check-out edit mode
    */
   public async showCheckOutEditMode(ctx: TelegramContext, match: RegExpExecArray): Promise<void> {
-    const page = parseInt(match[1]);
-    const state = this.keyboardManager.getUserState(ctx.userId);
-    
-    if (!state.currentData) {
-      state.currentData = {};
+    try {
+      logger.info(`[TaskHandler] Showing check-out edit mode with action: ${match.input}`);
+      
+      // Extract task ID from the complex string
+      // Format: show_checkout_edit_FULL_TASK_ID
+      // Where FULL_TASK_ID might be something like: 361_2025-04-06_checkout_checkout
+      const parts = match.input?.split('_') || [];
+      logger.debug(`[TaskHandler] Parsed action parts: ${JSON.stringify(parts)}`);
+      
+      if (parts.length < 4) {
+        logger.error(`[TaskHandler] Invalid check-out edit action format: ${match.input}`);
+        await ctx.reply('Помилка: Неправильний формат дії редагування.');
+        return;
+      }
+      
+      // The full task ID is everything after "show_checkout_edit_"
+      // We need to reconstruct it because it contains underscores
+      const taskId = parts.slice(3).join('_');
+      logger.debug(`[TaskHandler] Extracted full taskId: ${taskId}`);
+      
+      // Default page to 1
+      const page = 1;
+      const state = this.keyboardManager.getUserState(ctx.userId);
+      
+      if (!state.currentData) {
+        state.currentData = {};
+      }
+      
+      state.currentData.page = page;
+      state.currentData.date = state.currentData.date || new Date();
+      state.currentData.selectedTaskId = taskId;
+      state.currentData.editMode = true;
+      
+      logger.debug(`[TaskHandler] Updated state: editMode=${state.currentData.editMode}, selectedTaskId=${state.currentData.selectedTaskId}`);
+      
+      // Clean up messages but don't change the persistent keyboard
+      await this.keyboardManager.cleanupMessages(ctx);
+      
+      // Show the task edit view
+      // Create a properly shaped RegExpExecArray object
+      const fakeRegex = /^edit_checkout_(.+)$/;
+      const fakeInput = `edit_checkout_${taskId}`;
+      logger.debug(`[TaskHandler] Creating regex match with input: ${fakeInput}`);
+      
+      const fakeMatch = fakeRegex.exec(fakeInput);
+      if (!fakeMatch) {
+        logger.error(`[TaskHandler] Failed to create regex match for: ${fakeInput}`);
+        await ctx.reply('Помилка при підготовці редагування виїзду.');
+        return;
+      }
+      
+      logger.debug(`[TaskHandler] Regex match created successfully: ${JSON.stringify(fakeMatch)}`);
+      
+      // Call the edit method directly
+      logger.debug(`[TaskHandler] Calling editCheckOut with taskId: ${taskId}`);
+      await this.editCheckOut(ctx, fakeMatch as RegExpExecArray);
+    } catch (error) {
+      logger.error(`[TaskHandler] Error in showCheckOutEditMode:`, error);
+      await ctx.reply('Помилка при відображенні редагування виїзду. Спробуйте пізніше.');
     }
-    
-    state.currentData.page = page;
-    state.currentData.date = state.currentData.date || new Date();
-    
-    // Just update the state to indicate we're in edit mode WITHOUT changing the keyboard
-    state.currentData.editMode = true;
-    
-    // Clean up messages but don't change the persistent keyboard
-    await this.keyboardManager.cleanupMessages(ctx);
-    
-    // Send the list with edit buttons
-    await this.sendCheckOutsList(ctx, state.currentData.date, page, true);
   }
   
   /**
@@ -671,24 +832,50 @@ export class TaskHandler implements ActionHandler {
    * Edit a specific check-out task
    */
   private async editCheckOut(ctx: TelegramContext, match: RegExpExecArray): Promise<void> {
-    const taskId = match[1];
-    const state = this.keyboardManager.getUserState(ctx.userId);
-    
-    if (!state.currentData) {
-      state.currentData = {};
-    }
-    
-    state.currentData.selectedTaskId = taskId;
-    state.currentData.editType = 'checkout';
-    
     try {
-      // Get the task from the repository
-      const task: Task | null = await findTaskById(taskId);
+      logger.info(`[TaskHandler] Editing check-out with match: ${JSON.stringify(match)}`);
+      
+      const taskId = match[1];
+      logger.debug(`[TaskHandler] Extracted taskId from match: ${taskId}`);
+      
+      const state = this.keyboardManager.getUserState(ctx.userId);
+      
+      if (!state.currentData) {
+        state.currentData = {};
+      }
+      
+      state.currentData.selectedTaskId = taskId;
+      state.currentData.editType = 'checkout';
+      
+      logger.debug(`[TaskHandler] Updated state for edit: editType=${state.currentData.editType}, selectedTaskId=${state.currentData.selectedTaskId}`);
+      
+      // Get the task directly by ID - these are unique in Firestore
+      logger.debug(`[TaskHandler] Finding task with exact ID: ${taskId}`);
+      let task = await findTaskById(taskId);
       
       if (!task) {
-        await ctx.reply(`Помилка: Завдання з ID ${taskId} не знайдено.`);
+        logger.error(`[TaskHandler] Task not found with ID: ${taskId}`);
+        
+        // Try to fetch tasks to show available options
+        const currentDate = new Date();
+        const tasks = await getTasksForDate(currentDate, TaskTypes.CHECKOUT);
+        
+        // More detailed error message with available task information
+        let errorMsg = `Помилка: Завдання з ID ${taskId} не знайдено.\n\n`;
+        errorMsg += `Доступні виїзди на сьогодні: ${tasks.length}\n`;
+        
+        if (tasks.length > 0) {
+          errorMsg += "Можливо ви хотіли вибрати одне з цих:\n";
+          tasks.slice(0, 3).forEach((t, i) => {
+            errorMsg += `${i+1}. ID: ${t.id}, Адреса: ${t.address || t.apartmentId}\n`;
+          });
+        }
+        
+        await ctx.reply(errorMsg);
         return;
       }
+      
+      logger.debug(`[TaskHandler] Found task: ${JSON.stringify(task)}`);
       
       await this.keyboardManager.cleanupMessages(ctx);
       
@@ -696,14 +883,19 @@ export class TaskHandler implements ActionHandler {
       const apartmentAddress = task.address || task.apartmentId;
       
       // Use our utility functions to generate the buttons and text
+      logger.debug(`[TaskHandler] Creating edit buttons for task`);
       const editButtons = createTaskEditButtons(task, 'checkout', apartmentAddress);
       const detailText = formatTaskDetailText(task, 'checkout', apartmentAddress);
+      
+      logger.debug(`[TaskHandler] Sending edit message with keyboard`);
       
       // Send message with inline keyboard
       const message = await ctx.reply(detailText, {
         parse_mode: 'Markdown',
         reply_markup: createInlineKeyboard(editButtons, true)
       });
+      
+      logger.debug(`[TaskHandler] Edit message sent successfully: ${message.message_id}`);
       
       // Store for cleanup
       this.keyboardManager.storeMessageId(ctx.userId, message.message_id);
@@ -719,6 +911,8 @@ export class TaskHandler implements ActionHandler {
    */
   private async editCheckOutTime(ctx: TelegramContext): Promise<void> {
     const state = this.keyboardManager.getUserState(ctx.userId);
+    logger.info(`[TaskHandler] Editing check-out time, selected task ID: ${state.currentData?.selectedTaskId}`);
+    
     if (!state.currentData || !state.currentData.selectedTaskId) {
       await ctx.reply('Помилка: Не вибрано завдання для редагування.');
       return;
@@ -734,6 +928,8 @@ export class TaskHandler implements ActionHandler {
    */
   private async editCheckOutKeys(ctx: TelegramContext): Promise<void> {
     const state = this.keyboardManager.getUserState(ctx.userId);
+    logger.info(`[TaskHandler] Editing check-out keys, selected task ID: ${state.currentData?.selectedTaskId}`);
+    
     if (!state.currentData || !state.currentData.selectedTaskId) {
       await ctx.reply('Помилка: Не вибрано завдання для редагування.');
       return;
@@ -749,6 +945,8 @@ export class TaskHandler implements ActionHandler {
    */
   private async editCheckOutMoney(ctx: TelegramContext): Promise<void> {
     const state = this.keyboardManager.getUserState(ctx.userId);
+    logger.info(`[TaskHandler] Editing check-out money, selected task ID: ${state.currentData?.selectedTaskId}`);
+    
     if (!state.currentData || !state.currentData.selectedTaskId) {
       await ctx.reply('Помилка: Не вибрано завдання для редагування.');
       return;

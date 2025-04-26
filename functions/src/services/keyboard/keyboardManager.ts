@@ -78,6 +78,12 @@ export class KeyboardManager {
     'checkout_edit': {
       'back_to_checkouts': 'checkouts_nav',
       'back_to_main': 'main_nav'
+    },
+    'users_nav': {
+      'back_to_users': 'users_nav',
+      'cancel_user_edit': 'users_nav',
+      'admin_panel': 'admin_nav',
+      'back_to_main': 'main_nav'
     }
   };
   

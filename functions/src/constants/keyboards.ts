@@ -413,8 +413,24 @@ export function createTaskDisplayKeyboard(options: TaskDisplayKeyboardOptions): 
     }
   }
 
+  // Date navigation row (always present for admin panel)
+  const dateNavRow = navRow + 1;
+  buttons.push({
+    text: '◀️ Попередній день',
+    action: `prev_${type}_day`,
+    role: 'admin',
+    position: { row: dateNavRow, col: 0 }
+  });
+  
+  buttons.push({
+    text: 'Наступний день ▶️',
+    action: `next_${type}_day`,
+    role: 'admin',
+    position: { row: dateNavRow, col: 1 }
+  });
+
   // Control buttons row
-  const controlRow = navRow + 1;
+  const controlRow = dateNavRow + 1;
   if (forEditing) {
     buttons.push({
       text: '❌ Скасувати',
@@ -444,10 +460,13 @@ export function createTaskEditButtons(
 ): KeyboardButtonConfig[] {
   const buttons: KeyboardButtonConfig[] = [];
   
+  // Include the task ID in actions to ensure it's preserved during edit operations
+  const taskId = task.id;
+  
   // Time edit button
   buttons.push({ 
     text: '⏰ Змінити час', 
-    action: `edit_${type}_time`, 
+    action: `edit_${type}_time_${taskId}`, 
     role: 'admin', 
     position: { row: 0, col: 0 } 
   });
@@ -455,7 +474,7 @@ export function createTaskEditButtons(
   // Keys edit button
   buttons.push({ 
     text: '🔑 Змінити ключі', 
-    action: `edit_${type}_keys`, 
+    action: `edit_${type}_keys_${taskId}`, 
     role: 'admin', 
     position: { row: 0, col: 1 } 
   });
@@ -463,7 +482,7 @@ export function createTaskEditButtons(
   // Money edit button
   buttons.push({ 
     text: '💰 Змінити суму', 
-    action: `edit_${type}_money`, 
+    action: `edit_${type}_money_${taskId}`, 
     role: 'admin', 
     position: { row: 1, col: 0 } 
   });
@@ -488,7 +507,37 @@ export function formatTaskDetailText(
   apartmentAddress?: string
 ): string {
   const title = type === 'checkin' ? 'заїзду' : 'виїзду';
-  const timeField = type === 'checkin' ? task.checkinTime : task.checkoutTime;
+  
+  // Get time from dueDate field which contains the actual scheduled time
+  let timeField = null;
+  if (task.dueDate) {
+    try {
+      // Convert dueDate to a JavaScript Date object
+      const dueDate = task.dueDate instanceof Timestamp ? 
+        task.dueDate.toDate() : 
+        task.dueDate instanceof Date ? 
+          task.dueDate : 
+          new Date(task.dueDate);
+      
+      // Format time in Kyiv timezone (UTC+2), regardless of server timezone
+      // Using toLocaleTimeString with explicit timezone options
+      const options = { 
+        hour: '2-digit', 
+        minute: '2-digit', 
+        hour12: false,
+        timeZone: 'Europe/Kiev' 
+      };
+      
+      timeField = dueDate.toLocaleTimeString('uk-UA', options);
+    } catch (error) {
+      console.error("Error formatting time:", error);
+      // Fallback to legacy time fields
+      timeField = type === 'checkin' ? task.checkinTime : task.checkoutTime;
+    }
+  } else {
+    // Fallback to specific time fields if available
+    timeField = type === 'checkin' ? task.checkinTime : task.checkoutTime;
+  }
   
   // Address details
   let addressDetails = '';

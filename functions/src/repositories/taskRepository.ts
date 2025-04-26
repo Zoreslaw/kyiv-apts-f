@@ -98,17 +98,49 @@ export async function updateTaskTime(
       };
     }
 
-    // Validate time format (HH:00)
-    if (!/^([0-9]|0[0-9]|1[0-9]|2[0-3]):00$/.test(newTime)) {
+    // Validate time format (HH:MM)
+    if (!/^([0-9]|0[0-9]|1[0-9]|2[0-3]):([0-5][0-9])$/.test(newTime)) {
       return {
         success: false,
-        message: `Недійсний формат часу: ${newTime}. Використовуйте формат "ГГ:00".`,
+        message: `Недійсний формат часу: ${newTime}. Використовуйте формат "ГГ:ХХ".`,
       };
     }
 
+    // Get current task data
+    const taskData = doc.data() || {};
+
+    // Get current dueDate and convert to JavaScript Date
+    let dueDate: Date;
+    if (taskData.dueDate instanceof Timestamp) {
+      dueDate = taskData.dueDate.toDate();
+    } else if (taskData.dueDate instanceof Date) {
+      dueDate = taskData.dueDate;
+    } else if (typeof taskData.dueDate === 'string') {
+      dueDate = new Date(taskData.dueDate);
+    } else {
+      // Fallback to current time in Kyiv timezone if invalid
+      dueDate = toKievDate(new Date()).toDate();
+      logger.warn(`Invalid dueDate format for task ${taskId}, using current Kyiv time`);
+    }
+
+    // Parse the new time string
+    const [hours, minutes] = newTime.split(':').map(n => parseInt(n, 10));
+    
+    // Create a new date with the correct timezone
+    const kievDate = toKievDate(dueDate);
+    // Set the hours and minutes in the Kyiv timezone
+    kievDate.set('hour', hours);
+    kievDate.set('minute', minutes);
+    
+    // Convert back to a regular Date object
+    const updatedDate = kievDate.toDate();
+    logger.info(`[updateTaskTime] Updating task ${taskId} time to ${newTime} (${updatedDate.toISOString()})`);
+    
+    // Update both dueDate and the specific time field for backward compatibility
     const updateField = changeType === 'checkin' ? 'checkinTime' : 'checkoutTime';
     await taskRef.update({
-      [updateField]: newTime,
+      dueDate: Timestamp.fromDate(updatedDate),
+      [updateField]: newTime, // Keep this for backward compatibility
       updatedAt: Timestamp.now(),
       updatedBy: userId,
     });
