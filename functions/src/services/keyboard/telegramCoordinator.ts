@@ -1,35 +1,10 @@
 import { logger } from 'firebase-functions';
-import { KeyboardManager, TelegramContext, UserState } from './keyboardManager';
+import { KeyboardManager, TelegramContext } from './keyboardManager';
 import { TaskHandler } from './handlers/taskHandler';
 import { MyTasksHandler } from "./handlers/myTasksHandler";
 import { UserHandler } from './handlers/userHandler';
-import { createTaskDateSelectorKeyboard } from '../../constants/keyboards';
-
-
-// import { ApartmentHandler } from './handlers/apartmentHandler';
 import { TaskService } from '../taskService';
-import {
-  createTaskDisplayKeyboard,
-  createTaskEditButtons,
-  formatTaskDetailText,
-  TaskDisplayKeyboardOptions,
-  createCleaningTaskDisplayKeyboard,
-  formatCleaningTaskDetailText,
-  CleaningTaskDisplayOptions,
-  CLEANING_TASKS_NAVIGATION,
-  CLEANING_TASK_EDIT_KEYBOARD,
-  CLEANING_TASK_DETAIL_KEYBOARD,
-  createInlineKeyboard
-} from '../../constants/keyboards';
 import { ActionHandler, ActionHandlerRegistry } from './actionHandler';
-import { Timestamp } from 'firebase-admin/firestore';
-import { TaskStatus, TaskTypes } from '../../utils/constants';
-import { 
-  findTasksByUserId as findTasksByUserAndType,
-  findById as findTaskById,
-  updateTask
-} from '../../repositories/taskRepository';
-import { Task } from '../../models/Task';
 import { CleaningTaskHandler } from './handlers/cleaningTaskHandler';
 import { MenuHandler } from './handlers/menuHandler'; 
 
