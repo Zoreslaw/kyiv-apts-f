@@ -182,86 +182,51 @@ export class TelegramService {
       return;
     }
 
-    // Handle as keyboard action first (standard commands)
-    switch (text) {
-      case "/menu":
-      case "⚙️ Меню":
-        await this.telegramCoordinator.handleAction(ctx, 'show_menu');
-        return;
+    // Handle standard commands with direct menu actions
+    const commandActions: { [key: string]: string } = {
+      "/menu": "show_menu",
+      "⚙️ Меню": "show_menu",
+      "/help": "help",
+      "❓ Допомога": "help",
+      "/about": "about",
+      "ℹ️ Про бота": "about",
+      "/get_my_tasks": "show_tasks",
+      "📋 Мої завдання": "show_tasks",
+      "/admin": "admin_panel",
+      "👨‍💼 Адмін панель": "admin_panel",
+      "Змінити заїзди": "edit_checkins",
+      "Змінити виїзди": "edit_checkouts",
+      "Користувачі": "manage_users",
+      "Головне меню": "back_to_main"
+    };
 
-      case "/help":
-      case "❓ Допомога":
-        await this.telegramCoordinator.handleAction(ctx, 'help');
-        return;
-
-      case "/about":
-      case "ℹ️ Про бота":
-        await this.telegramCoordinator.handleAction(ctx, 'about');
-        return;
-
-      case "/get_my_tasks":
-      case "📋 Мої завдання":
-        await this.telegramCoordinator.handleAction(ctx, 'show_tasks');
-        return;
-        
-      case "/admin":
-      case "👨‍💼 Адмін панель":
-        if (isAdmin) {
-          await this.telegramCoordinator.handleAction(ctx, 'admin_panel');
-        } else {
-          await ctx.reply("У вас немає доступу до адмін-панелі.");
-        }
-        return;
-        
-      // Admin menu button handlers
-      case "Змінити заїзди":
-        if (isAdmin) {
-          await this.telegramCoordinator.handleAction(ctx, 'edit_checkins');
-        } else {
-          await ctx.reply("У вас немає доступу до цієї функції.");
-        }
-        return;
-        
-      case "Змінити виїзди":
-        if (isAdmin) {
-          await this.telegramCoordinator.handleAction(ctx, 'edit_checkouts');
-        } else {
-          await ctx.reply("У вас немає доступу до цієї функції.");
-        }
-        return;
-        
-      case "Користувачі":
-        if (isAdmin) {
-          await this.telegramCoordinator.handleAction(ctx, 'manage_users');
-        } else {
-          await ctx.reply("У вас немає доступу до цієї функції.");
-        }
-        return;
-        
-      case "Головне меню":
-        await this.telegramCoordinator.handleAction(ctx, 'back_to_main');
-        return;
-        
-      case "/admin":
-      case "👨‍💼 Адмін панель":
-        if (isAdmin) {
-          await this.telegramCoordinator.handleAction(ctx, 'admin_panel');
-        } else {
-          await ctx.reply("У вас немає доступу до адмін-панелі.");
-        }
-        return;
+    // Check if the text is a recognized command
+    if (commandActions[text]) {
+      const action = commandActions[text];
       
-      // Debug commands for development
-      case "/makeadmin":
-        await this.makeUserAdmin(ctx.userId, ctx);
+      // For admin-only commands, check permissions
+      if ((action === "admin_panel" || text.startsWith("Змінити") || text === "Користувачі") && !isAdmin) {
+        await ctx.reply("У вас немає доступу до адмін-панелі.");
         return;
+      }
+      
+      await this.telegramCoordinator.handleAction(ctx, action);
+      return;
     }
 
-    // Try to handle as a direct action
-    const mappedAction = this.telegramCoordinator.resolveActionFromText(text, userId);
-    const isActionHandled = await this.telegramCoordinator.handleAction(ctx, mappedAction || text);
-    if (isActionHandled) {
+    // Handle debug commands
+    if (text === "/makeadmin") {
+      await this.makeUserAdmin(ctx.userId, ctx);
       return;
+    }
+
+    // Try to handle as a direct action mapped from text
+    const mappedAction = this.telegramCoordinator.resolveActionFromText(text, userId);
+    if (mappedAction) {
+      const isActionHandled = await this.telegramCoordinator.handleAction(ctx, mappedAction);
+      if (isActionHandled) {
+        return;
+      }
     }
 
     // Handle AI processing for other messages
