@@ -5,7 +5,9 @@ import { MyTasksHandler } from "./handlers/myTasksHandler";
 import { UserHandler } from './handlers/userHandler';
 import { TaskService } from '../taskService';
 import { ActionHandler, ActionHandlerRegistry } from './actionHandler';
-import { MenuHandler } from './handlers/menuHandler'; 
+import { MenuHandler } from './handlers/menuHandler';
+import {setSession} from "../sessionStore";
+import {TelegramMessage} from "../telegramService";
 
 // Task service interface to allow for dependency injection
 export interface ITaskService {
@@ -115,6 +117,7 @@ export class TelegramCoordinator {
     this.actionRegistry.registerDirectHandler('show_tasks', myTasksHandler);
     this.actionRegistry.registerRegexHandler(/^show_tasks_/, myTasksHandler);
     this.actionRegistry.registerRegexHandler(/^task_detail_/, myTasksHandler);
+    this.actionRegistry.registerRegexHandler(/^mark_done_/, myTasksHandler);
   }
 
   /**
@@ -236,5 +239,34 @@ export class TelegramCoordinator {
    */
   async cleanupMessages(ctx: TelegramContext): Promise<void> {
     await this.keyboardManager.cleanupMessages(ctx);
+  }
+
+  async handleIncomingMessage(ctx: TelegramContext): Promise<void> {
+    const message = ctx.message as TelegramMessage;
+    if (ctx.session?.waitingForPhoto) {
+      logger.info(`[handleIncomingMessage] User ${ctx.userId} is sending photo or comment`);
+
+      if (ctx.message?.photo) {
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        ctx.session.collectedPhotos!.push(photo.file_id);
+
+        if (message.caption) {
+          ctx.session.comment = (ctx.session.comment || '') + ' ' + message.caption;
+        }
+
+        setSession(String(ctx.userId), ctx.session);
+
+      } else if (ctx.message?.text) {
+        const comment = ctx.message.text;
+        ctx.session.comment = (ctx.session.comment || '') + ' ' + comment;
+        setSession(String(ctx.userId), ctx.session);
+
+        logger.info(`[handleIncomingMessage] Received comment: ${comment}`);
+        await ctx.reply(`📝 Коментар отримано: "${comment}"`);
+
+      } else {
+        await ctx.reply(`⚠️ Будь ласка, надішліть фото або коментар.`);
+      }
+    }
   }
 }

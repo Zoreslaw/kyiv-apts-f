@@ -10,6 +10,7 @@ import {
 } from '../../../constants/keyboards';
 import {logger} from "firebase-functions";
 import {TaskTypes} from "../../../utils/constants";
+import {setSession} from "../../sessionStore";
 
 export class MyTasksHandler implements ActionHandler {
     constructor(
@@ -53,6 +54,12 @@ export class MyTasksHandler implements ActionHandler {
         if (actionData.startsWith('task_detail_')) {
             const taskId = actionData.replace('task_detail_', '');
             await this.showTaskDetails(ctx, taskId);
+            return;
+        }
+
+        if (actionData.startsWith('mark_done_')) {
+            const reservationId = actionData.replace('mark_done_', '');
+            await this.handleMarkDone(ctx, reservationId);
             return;
         }
 
@@ -218,7 +225,23 @@ export class MyTasksHandler implements ActionHandler {
                     const dueDate = toDateSafe(task.dueDate);
                     const dueDateStr = `${dueDate.getDate().toString().padStart(2, '0')}.${(dueDate.getMonth() + 1).toString().padStart(2, '0')}.${dueDate.getFullYear()}`;
 
-                    const typeLabel = task.type === 'checkin' ? '🟢 Заїзд' : '🔴 Виїзд';
+                    let typeLabel = '';
+
+                    if (task.type === 'checkin') {
+                        typeLabel = '🟢 Заїзд';
+                    } else {
+                        typeLabel = '🔴 Виїзд';
+                    }
+
+                    if (task.status === 'completed') {
+                        typeLabel += ' (завершено, очікує перевірки)';
+                    } else if (task.status === 'pending') {
+                        typeLabel += ' (очікує виконання)';
+                    } else if (task.status === 'verified') {
+                        typeLabel += ' (перевірено)';
+                    } else {
+                        typeLabel += ' (стан невідомий)';
+                    }
 
                     text += `\n${typeLabel}:\n`;
                     text += `🏠 ${task.apartmentId}: ${task.address}\n`;
@@ -352,7 +375,6 @@ export class MyTasksHandler implements ActionHandler {
 
             const statusTextMap: Record<string, string> = {
                 pending: '🟡 Очікує виконання',
-                in_progress: '🔄 У процесі',
                 completed: '✅ Завершено (очікує перевірки)',
                 verified: '🔵 Перевірено',
                 cancelled: '❌ Скасовано'
@@ -386,6 +408,44 @@ export class MyTasksHandler implements ActionHandler {
         } catch (error) {
             logger.error('[showTaskDetails] Error:', error);
             await ctx.reply('Не вдалося завантажити деталі завдання.');
+        }
+    }
+
+    /**
+     * Handles the step when the user indicates the cleaning is completed: prompts to send photos.
+     */
+    public async handleMarkDone(ctx: TelegramContext, reservationId: string): Promise<void> {
+        logger.info(`[handleMarkDone] User ${ctx.userId} clicked mark done for reservationId=${reservationId}`);
+
+        try {
+            // Save session state to wait for photo and comment
+            ctx.session = {
+                waitingForPhoto: true,
+                reservationIdForPhoto: reservationId,
+                photoWaitingStart: Date.now(),
+                collectedPhotos: [],
+                comment: ''
+            };
+
+            setSession(String(ctx.userId), ctx.session);
+
+            await ctx.reply(
+                `📸 *Будь ласка, надішліть фото прибраної квартири!*\n\n` +
+                `⏳ У вас є *5 хвилин* на відправлення. Якщо фото не буде надіслано, сесію буде скасовано і вас буде повернено на головну сторінку.`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '✅ Готово', callback_data: 'finish_upload_photos' }],
+                            [{ text: '🏠 Головне меню', callback_data: 'back_to_main' }]
+                        ]
+                    }
+                }
+            );
+
+        } catch (error) {
+            logger.error('[handleMarkDone] Error:', error);
+            await ctx.reply('Виникла помилка при обробці запиту. Спробуйте ще раз.');
         }
     }
 }

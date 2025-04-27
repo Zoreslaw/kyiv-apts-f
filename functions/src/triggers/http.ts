@@ -25,34 +25,37 @@ export const telegramWebhook = onRequest(async (req, res) => {
       return;
     }
 
-    // Handle regular messages
-    if (!update.message?.text) {
+    // // Handle regular messages
+    // if (!update.message?.text) {
+    //   res.status(200).send({ success: true });
+    //   return;
+    // }
+
+    // If no message - just end
+    if (!update.message) {
       res.status(200).send({ success: true });
       return;
     }
 
     const chatId = String(update.message.chat.id);
-    const text = update.message.text;
     const userId = String(update.message.from.id);
 
     // Handle /start command
-    if (text === "/start") {
+    if (update.message.text === "/start") {
       const firstName = update.message.from.first_name || "";
       const lastName = update.message.from.last_name || "";
       const username = update.message.from.username || "";
 
       logger.info(`New user: ${firstName} (ID=${userId})`);
       await telegramService.handleStartCommand(chatId, userId, firstName, lastName, username);
-      res.status(200).send({ success: true });
-      return;
+    } else {
+      // Otherwise, handle regular message (text, photo, whatever)
+      await telegramService.handleMessage(update.message);
     }
 
-    // Handle all other messages
-    await telegramService.handleMessage(update.message);
     res.status(200).send({ success: true });
   } catch (error) {
     logger.error("Error in telegramWebhook trigger:", error);
-    // Always return 200 to prevent Telegram from retrying
     res.status(200).send({ success: true });
   }
-}); 
+});

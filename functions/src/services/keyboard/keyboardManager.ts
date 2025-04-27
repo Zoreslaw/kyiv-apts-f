@@ -24,6 +24,24 @@ export interface TelegramContext {
   }) => Promise<{ message_id: number }>;
   deleteMessage: (messageId: number) => Promise<void>;
   messageIdToEdit?: number;
+  session?: {
+    waitingForPhoto?: boolean;
+    reservationIdForPhoto?: string;
+    photoWaitingStart?: number;
+    collectedPhotos?: string[];
+    comment?: string;
+  };
+  message?: {
+    message_id?: number;
+    text?: string;
+    photo?: {
+      file_id: string;
+      file_unique_id: string;
+      file_size: number;
+      width: number;
+      height: number;
+    }[];
+  };
 }
 
 // Define user state interface

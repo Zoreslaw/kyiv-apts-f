@@ -1,7 +1,7 @@
 import axios from "axios";
 import { logger } from "firebase-functions";
 import { defineString } from "firebase-functions/params";
-import { AIService } from "./aiService";
+// import { AIService } from "./aiService";
 import { TaskService } from "./taskService";
 import { findOrCreateUser } from "./userService";
 import { FunctionExecutionService } from "./functionExecutionService";
@@ -13,12 +13,15 @@ import { TelegramContext } from "./keyboard/keyboardManager";
 import { updateUser } from "../repositories/userRepository";
 import { Timestamp } from "firebase-admin/firestore";
 import FormData from 'form-data';
+import {clearSession, getSession} from "./sessionStore";
+import * as admin from 'firebase-admin';
 
 // Types
-interface TelegramMessage {
+export interface TelegramMessage {
   chat: { id: string | number };
   from: { id: string | number; first_name?: string; last_name?: string; username?: string };
   text?: string;
+  caption?: string;
   callback_query?: {
     data: string;
     message: {
@@ -41,13 +44,13 @@ const botToken = defineString("TELEGRAM_BOT_TOKEN");
 const TELEGRAM_API = `https://api.telegram.org/bot${botToken.value()}`;
 
 export class TelegramService {
-  private aiService: AIService;
+  // private aiService: AIService;
   private taskService: TaskService;
   private functionService: FunctionExecutionService;
   private telegramCoordinator: TelegramCoordinator;
 
   constructor(openaiApiKey?: string) {
-    this.aiService = new AIService();
+    // this.aiService = new AIService();
     this.taskService = new TaskService();
     this.functionService = new FunctionExecutionService();
     this.telegramCoordinator = new TelegramCoordinator(this.taskService);
@@ -77,11 +80,15 @@ export class TelegramService {
   /**
    * Create a TelegramContext object for a specific user
    */
-  private createContext(chatId: string | number, userId: string | number, extras?: { messageIdToEdit?: number }): TelegramContext {
+  private createContext(chatId: string | number, userId: string | number, extras?: { messageIdToEdit?: number, message?: any }): TelegramContext {
+    const session = getSession(String(userId));
+
     return {
       chatId,
       userId,
+      session,
       messageIdToEdit: extras?.messageIdToEdit,
+      message: extras?.message,
       reply: async (text: string, options?: any) => {
         // Handle message deletion option
         if (options?.delete_message_id) {
@@ -167,17 +174,25 @@ export class TelegramService {
     const chatId = String(chat.id);
     const userId = String(from.id);
 
-    if (!text) {
-      await this.sendMessage(chatId, "Будь ласка, надішліть текстове повідомлення.");
-      return;
-    }
+    // if (!text) {
+    //   await this.sendMessage(chatId, "Будь ласка, надішліть текстове повідомлення.");
+    //   return;
+    // }
 
     const user = await findByTelegramId(userId);
     const isAdmin = user?.role === UserRoles.ADMIN;
-    const ctx = this.createContext(chatId, userId);
+    const ctx = this.createContext(chatId, userId, { message });
+
+    // NEW: if waiting for photo, handle it differently
+    if (ctx.session?.waitingForPhoto) {
+      logger.info(`[TelegramService] User ${ctx.userId} is sending photo or comment (waitingForPhoto)`);
+
+      await this.telegramCoordinator.handleIncomingMessage(ctx);
+      return;
+    }
 
     // Check if we're in an editing mode and try to process the text input
-    const isEditingTask = await this.telegramCoordinator.processText(ctx, text);
+    const isEditingTask = await this.telegramCoordinator.processText(ctx, text || '');
     if (isEditingTask) {
       return;
     }
@@ -201,7 +216,7 @@ export class TelegramService {
     };
 
     // Check if the text is a recognized command
-    if (commandActions[text]) {
+    if (text && commandActions[text]) {
       const action = commandActions[text];
       
       // For admin-only commands, check permissions
@@ -221,7 +236,7 @@ export class TelegramService {
     }
 
     // Try to handle as a direct action mapped from text
-    const mappedAction = this.telegramCoordinator.resolveActionFromText(text, userId);
+    const mappedAction = this.telegramCoordinator.resolveActionFromText(text || '', userId);
     if (mappedAction) {
       const isActionHandled = await this.telegramCoordinator.handleAction(ctx, mappedAction);
       if (isActionHandled) {
@@ -229,39 +244,43 @@ export class TelegramService {
       }
     }
 
-    // Handle AI processing for other messages
-    const assignedApartments = user?.assignedApartmentIds || [];
-    const currentTasks = (await this.taskService.getTasksForUser(userId)).tasks || [];
-
-    const result = await this.aiService.processMessage(text, {
-      userId,
-      chatId,
-      isAdmin,
-      assignedApartments,
-      currentTasks
-    });
-
-    if (result.type === 'text') {
-      await this.sendMessage(chatId, result.content || "*Операція успішно виконана.*", "Markdown");
-    } else if (result.type === 'function_call' && result.function_call) {
-      const functionResult = await this.functionService.executeFunction(
-        result.function_call.name,
-        {
-          ...JSON.parse(result.function_call.arguments),
-          userId
-        }
-      );
-      
-      const followUp = await this.aiService.processFunctionResult(
-        chatId,
-        result.function_call.name,
-        JSON.parse(result.function_call.arguments),
-        functionResult
-      );
-      
-      await this.sendMessage(chatId, followUp.content, "Markdown");
-    }
+// Закінчення handleMessage
   }
+
+
+  //   // Handle AI processing for other messages
+  //   const assignedApartments = user?.assignedApartmentIds || [];
+  //   const currentTasks = (await this.taskService.getTasksForUser(userId)).tasks || [];
+  //
+  //   const result = await this.aiService.processMessage(text || '', {
+  //     userId,
+  //     chatId,
+  //     isAdmin,
+  //     assignedApartments,
+  //     currentTasks
+  //   });
+  //
+  //   if (result.type === 'text') {
+  //     await this.sendMessage(chatId, result.content || "*Операція успішно виконана.*", "Markdown");
+  //   } else if (result.type === 'function_call' && result.function_call) {
+  //     const functionResult = await this.functionService.executeFunction(
+  //       result.function_call.name,
+  //       {
+  //         ...JSON.parse(result.function_call.arguments),
+  //         userId
+  //       }
+  //     );
+  //
+  //     const followUp = await this.aiService.processFunctionResult(
+  //       chatId,
+  //       result.function_call.name,
+  //       JSON.parse(result.function_call.arguments),
+  //       functionResult
+  //     );
+  //
+  //     await this.sendMessage(chatId, followUp.content, "Markdown");
+  //   }
+  // }}
 
   /**
    * Handle callback queries (button clicks)
@@ -284,6 +303,20 @@ export class TelegramService {
     const ctx = this.createContext(chatId, userId, {
       messageIdToEdit: callbackQuery.message.message_id
     });
+
+    if (data === 'finish_upload_photos') {
+      await this.handleFinishUploadingPhotos(ctx);
+      return;
+    }
+
+    if (data === 'back_to_main') {
+      clearSession(String(ctx.userId));
+      await ctx.reply("🏠 Повертаємо вас на головне меню...", {
+        parse_mode: "Markdown"
+      });
+      await this.telegramCoordinator.showKeyboard(ctx, 'main_nav');
+      return;
+    }
 
     // Pass to coordinator for handling
     await this.telegramCoordinator.handleAction(ctx, data);
@@ -403,4 +436,92 @@ export class TelegramService {
       await ctx.reply("❌ Помилка при наданні прав адміністратора. Спробуйте пізніше.");
     }
   }
+
+  private async handleFinishUploadingPhotos(ctx: TelegramContext): Promise<void> {
+    const session = ctx.session;
+
+    if (!session || !session.waitingForPhoto || !session.collectedPhotos?.length) {
+      await ctx.reply('❌ Немає фото для збереження або сесія неактивна.');
+      return;
+    }
+
+    const reservationId = session.reservationIdForPhoto;
+    const uploadedPhotoLinks: string[] = [];
+
+    try {
+      for (const fileId of session.collectedPhotos) {
+        const fileUrl = await this.downloadTelegramFile(fileId);
+        const uploadedUrl = await this.uploadPhotoToStorage(fileUrl, reservationId!);
+        uploadedPhotoLinks.push(uploadedUrl);
+      }
+
+      await this.saveCompletedCleaningData(String(ctx.userId), reservationId!, uploadedPhotoLinks, session.comment || '');
+      await this.markTaskAsCompleted(reservationId!);
+      clearSession(String(ctx.userId));
+
+      await ctx.reply('✅ Фото успішно збережені і дані оновлено. Дякуємо за прибирання!', {
+        parse_mode: "Markdown"
+      });
+
+      await this.telegramCoordinator.showKeyboard(ctx, 'main_nav');
+    } catch (error) {
+      logger.error('[handleFinishUploadingPhotos] Error:', error);
+      await ctx.reply('❌ Сталася помилка при збереженні фото. Спробуйте ще раз.');
+    }
+  }
+
+  private async downloadTelegramFile(fileId: string): Promise<string> {
+    const botToken = defineString("TELEGRAM_BOT_TOKEN").value();
+    const fileInfo = await axios.get<{ result: { file_path: string } }>(`https://api.telegram.org/bot${botToken}/getFile?file_id=${fileId}`);
+    const filePath = fileInfo.data.result.file_path;
+    return `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+  }
+
+  private async uploadPhotoToStorage(fileUrl: string, reservationId: string): Promise<string> {
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+    const bucket = admin.storage().bucket();
+    const filename = `completed_cleanings/${reservationId}/${Date.now()}.jpg`;
+    const file = bucket.file(filename);
+    await file.save(response.data as Buffer);
+    await file.makePublic();
+    return file.publicUrl();
+  }
+
+  private async saveCompletedCleaningData(userId: string, reservationId: string | undefined, photoUrls: string[], comment: string): Promise<void> {
+    if (!reservationId) {
+      throw new Error('Reservation ID is missing.');
+    }
+
+    const docRef = admin.firestore().collection('completed_cleanings').doc(reservationId);
+
+    await docRef.set({
+      userId,
+      reservationId,
+      photoUrls,
+      comment,
+      completedAt: new Date()
+    }, { merge: true });
+  }
+
+  private async markTaskAsCompleted(reservationId: string): Promise<void> {
+    const firestore = admin.firestore();
+    const tasksRef = firestore.collection('tasks');
+
+    const snapshot = await tasksRef.where('reservationId', '==', reservationId).get();
+
+    if (snapshot.empty) {
+      logger.warn(`[markTaskAsCompleted] No tasks found for reservationId=${reservationId}`);
+      return;
+    }
+
+    const batch = firestore.batch();
+
+    snapshot.forEach(doc => {
+      batch.update(doc.ref, { status: 'completed' });
+    });
+
+    await batch.commit();
+    logger.info(`[markTaskAsCompleted] Successfully marked tasks as completed for reservationId=${reservationId}`);
+  }
+
 }
