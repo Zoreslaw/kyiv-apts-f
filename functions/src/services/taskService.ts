@@ -58,44 +58,6 @@ export class TaskService {
     }
   }
 
-  async updateCleaningTimesForAllTasks(): Promise<void> {
-    const db = getFirestore();
-    const tasksSnapshot = await db.collection("tasks").get();
-
-    logger.info(`[TaskService] Found ${tasksSnapshot.size} tasks for cleaning time update`);
-
-    for (const doc of tasksSnapshot.docs) {
-      const data = doc.data();
-      const dueDateRaw = data.dueDate;
-
-      if (!dueDateRaw) continue;
-
-      const dueDate = dueDateRaw instanceof Timestamp ? dueDateRaw.toDate() : new Date(dueDateRaw);
-
-      let cleaningTimeStart: Date | null = null;
-      let cleaningTimeEnd: Date | null = null;
-
-      if (data.type === TaskTypes.CHECKOUT) {
-        cleaningTimeStart = dueDate;
-        cleaningTimeEnd = new Date(dueDate.getTime() + 3 * 60 * 60 * 1000);
-      } else if (data.type === TaskTypes.CHECKIN) {
-        cleaningTimeEnd = dueDate;
-        cleaningTimeStart = new Date(dueDate.getTime() - 1 * 60 * 60 * 1000);
-      } else {
-        continue;
-      }
-
-      await doc.ref.update({
-        cleaningTimeStart: cleaningTimeStart.toISOString(),
-        cleaningTimeEnd: cleaningTimeEnd.toISOString()
-      });
-
-      logger.info(`[TaskService] Updated ${doc.id} with cleaning time`);
-    }
-
-    logger.info(`[TaskService] Cleaning time updates completed`);
-  }
-
   async updateTaskStatus(taskId: string, status: TaskStatus, userId: string): Promise<Task | null> {
     return updateTask(taskId, { 
       status, 

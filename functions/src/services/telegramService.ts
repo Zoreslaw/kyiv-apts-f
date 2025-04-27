@@ -183,9 +183,9 @@ export class TelegramService {
     const isAdmin = user?.role === UserRoles.ADMIN;
     const ctx = this.createContext(chatId, userId, { message });
 
-    // NEW: if waiting for photo, handle it differently
-    if (ctx.session?.waitingForPhoto) {
-      logger.info(`[TelegramService] User ${ctx.userId} is sending photo or comment (waitingForPhoto)`);
+    // NEW: if waiting for photo or text, handle it differently
+    if (ctx.session?.waitingForPhoto || ctx.session?.isProblemReport) {
+      logger.info(`[TelegramService] User ${ctx.userId} is sending photo or comment (waitingForPhoto=${ctx.session?.waitingForPhoto}, isProblemReport=${ctx.session?.isProblemReport})`);
 
       await this.telegramCoordinator.handleIncomingMessage(ctx);
       return;
@@ -243,8 +243,6 @@ export class TelegramService {
         return;
       }
     }
-
-// Закінчення handleMessage
   }
 
 
@@ -455,13 +453,20 @@ export class TelegramService {
         uploadedPhotoLinks.push(uploadedUrl);
       }
 
-      await this.saveCompletedCleaningData(String(ctx.userId), reservationId!, uploadedPhotoLinks, session.comment || '');
-      await this.markTaskAsCompleted(reservationId!);
-      clearSession(String(ctx.userId));
+      if (session.isDirtyReport) {
+        await this.saveDirtyApartmentReportData(String(ctx.userId), reservationId!, uploadedPhotoLinks, session.comment || '');
+        await ctx.reply('✅ Ваш звіт про брудну квартиру успішно надіслано!', {
+          parse_mode: "Markdown"
+        });
+      } else {
+        await this.saveCompletedCleaningData(String(ctx.userId), reservationId!, uploadedPhotoLinks, session.comment || '');
+        await this.markTaskAsCompleted(reservationId!);
+        await ctx.reply('✅ Фото успішно збережені і завдання оновлено. Дякуємо за прибирання!', {
+          parse_mode: "Markdown"
+        });
+      }
 
-      await ctx.reply('✅ Фото успішно збережені і дані оновлено. Дякуємо за прибирання!', {
-        parse_mode: "Markdown"
-      });
+      clearSession(String(ctx.userId));
 
       await this.telegramCoordinator.showKeyboard(ctx, 'main_nav');
     } catch (error) {
@@ -524,4 +529,15 @@ export class TelegramService {
     logger.info(`[markTaskAsCompleted] Successfully marked tasks as completed for reservationId=${reservationId}`);
   }
 
+  private async saveDirtyApartmentReportData(userId: string, reservationId: string, photoUrls: string[], comment: string): Promise<void> {
+    const docRef = admin.firestore().collection('dirty_apartment_reports').doc(reservationId);
+
+    await docRef.set({
+      userId,
+      reservationId,
+      photoUrls,
+      comment,
+      reportedAt: new Date()
+    }, { merge: true });
+  }
 }

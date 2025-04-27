@@ -2,6 +2,7 @@ import { ActionHandler } from '../actionHandler';
 import { TelegramContext, KeyboardManager } from '../keyboardManager';
 import { TaskService } from '../../taskService';
 import axios from 'axios';
+import * as admin from 'firebase-admin';
 import { defineString } from "firebase-functions/params";
 import {
     createInlineKeyboard,
@@ -63,6 +64,17 @@ export class MyTasksHandler implements ActionHandler {
             return;
         }
 
+        if (actionData.startsWith('report_dirty_')) {
+            const reservationId = actionData.replace('mark_dirty_', '');
+            await this.handleMarkDirty(ctx, reservationId);
+            return;
+        }
+
+        if (actionData.startsWith('report_issue_')) {
+            const reservationId = actionData.replace('report_issue_', '');
+            await this.handleReportProblem(ctx, reservationId);
+            return;
+        }
     }
 
     /**
@@ -148,8 +160,6 @@ export class MyTasksHandler implements ActionHandler {
     public async showTaskSelectorWithSummary(ctx: TelegramContext, page: number = 1): Promise<void> {
         try {
             logger.info(`[MyTasksHandler] Showing task page ${page} for user ${ctx.userId}`);
-
-            await this.taskService.updateCleaningTimesForAllTasks();
 
             const toDateSafe = (value: any): Date => {
                 if (value && typeof value.toDate === 'function') return value.toDate();
@@ -382,6 +392,8 @@ export class MyTasksHandler implements ActionHandler {
 
             const statusText = statusTextMap[task.status] || 'ℹ️ Невідомий статус';
 
+            const notesText = task.notes ? `📝 *Примітки:* ${task.notes}` : '';
+
             const message = `${importantText}\n\n` +
                 `🏠 *Адреса:* ${task.address}\n` +
                 `🆔 *ID:* ${task.apartmentId}\n` +
@@ -390,7 +402,8 @@ export class MyTasksHandler implements ActionHandler {
                 `📞 *Телефон:* ${task.guestPhone || 'не вказано'}\n` +
                 `🔑 *Ключів:* ${task.keysCount ?? 'не вказано'}\n` +
                 `💰 *Сума:* ${task.sumToCollect ?? 0}\n` +
-                `📌 *Статус:* ${statusText}`;
+                `📌 *Статус:* ${statusText}\n\n` +
+                notesText;
 
             const keyboard = {
                 inline_keyboard: [
@@ -422,7 +435,6 @@ export class MyTasksHandler implements ActionHandler {
             ctx.session = {
                 waitingForPhoto: true,
                 reservationIdForPhoto: reservationId,
-                photoWaitingStart: Date.now(),
                 collectedPhotos: [],
                 comment: ''
             };
@@ -430,8 +442,8 @@ export class MyTasksHandler implements ActionHandler {
             setSession(String(ctx.userId), ctx.session);
 
             await ctx.reply(
-                `📸 *Будь ласка, надішліть фото прибраної квартири!*\n\n` +
-                `⏳ У вас є *5 хвилин* на відправлення. Якщо фото не буде надіслано, сесію буде скасовано і вас буде повернено на головну сторінку.`,
+                `📸 *Будь ласка, надішліть фото прибраної квартири та, за бажанням, залиште коментар.*\n\n` +
+                `Коли завершите, натисніть "✅ Готово".`,
                 {
                     parse_mode: 'Markdown',
                     reply_markup: {
@@ -448,4 +460,90 @@ export class MyTasksHandler implements ActionHandler {
             await ctx.reply('Виникла помилка при обробці запиту. Спробуйте ще раз.');
         }
     }
+
+    /**
+     * Handles the first step when the user reports that the apartment is very dirty: prompts to send photos.
+     */
+    public async handleMarkDirty(ctx: TelegramContext, reservationId: string): Promise<void> {
+        logger.info(`[handleMarkDirty] User ${ctx.userId} clicked report dirty for reservationId=${reservationId}`);
+
+        try {
+            // Save session state to wait for dirty photo and comment
+            ctx.session = {
+                waitingForPhoto: true,
+                reservationIdForPhoto: reservationId,
+                collectedPhotos: [],
+                comment: '',
+                isDirtyReport: true
+            };
+
+            setSession(String(ctx.userId), ctx.session);
+
+            await ctx.reply(
+                `🧽 *Будь ласка, надішліть фото стану квартири та короткий опис проблеми.*\n\n` +
+                `Коли завершите, натисніть "✅ Готово".`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '✅ Готово', callback_data: 'finish_upload_photos' }],
+                            [{ text: '🏠 Головне меню', callback_data: 'back_to_main' }]
+                        ]
+                    }
+                }
+            );
+
+        } catch (error) {
+            logger.error('[handleMarkDirty] Error:', error);
+            await ctx.reply('Виникла помилка при обробці запиту. Спробуйте ще раз.');
+        }
+    }
+
+    public async handleReportProblem(ctx: TelegramContext, reservationId: string): Promise<void> {
+        logger.info(`[handleReportProblem] User ${ctx.userId} clicked report issue for reservationId=${reservationId}`);
+
+        try {
+            ctx.session = {
+                waitingForPhoto: false,
+                reservationIdForPhoto: reservationId,
+                comment: '',
+                isProblemReport: true
+            };
+
+            setSession(String(ctx.userId), ctx.session);
+
+            await ctx.reply(
+                `✏️ *Будь ласка, опишіть проблему або нестачу у квартирі текстом.*`,
+                { parse_mode: 'Markdown' }
+            );
+
+        } catch (error) {
+            logger.error('[handleReportProblem] Error:', error);
+            await ctx.reply('Виникла помилка при обробці запиту. Спробуйте ще раз.');
+        }
+    }
+
+    public async updateTaskNotes(reservationId: string, comment: string): Promise<void> {
+        const firestore = admin.firestore();
+        const tasksRef = firestore.collection('tasks');
+
+        const snapshot = await tasksRef.where('reservationId', '==', reservationId).get();
+
+        if (snapshot.empty) {
+            logger.warn(`[updateTaskNotes] No tasks found for reservationId=${reservationId}`);
+            return;
+        }
+
+        const batch = firestore.batch();
+
+        snapshot.forEach(doc => {
+            const existingNotes = doc.get('notes') || '';
+            const updatedNotes = `${existingNotes}\nProblem reported: ${comment}`;
+            batch.update(doc.ref, { notes: updatedNotes });
+        });
+
+        await batch.commit();
+        logger.info(`[updateTaskNotes] Problem note added to task ${reservationId}`);
+    }
+
 }

@@ -6,7 +6,7 @@ import { UserHandler } from './handlers/userHandler';
 import { TaskService } from '../taskService';
 import { ActionHandler, ActionHandlerRegistry } from './actionHandler';
 import { MenuHandler } from './handlers/menuHandler';
-import {setSession} from "../sessionStore";
+import {clearSession, setSession} from "../sessionStore";
 import {TelegramMessage} from "../telegramService";
 
 // Task service interface to allow for dependency injection
@@ -34,6 +34,7 @@ export class TelegramCoordinator {
   private keyboardManager: KeyboardManager;
   private actionRegistry: ActionHandlerRegistry;
   private handlers: ActionHandler[] = [];
+  private myTasksHandler!: MyTasksHandler;
   private userStates: Map<string, any> = new Map();
 
   /**
@@ -62,7 +63,8 @@ export class TelegramCoordinator {
     const menuHandler = new MenuHandler(this.keyboardManager);
     const userHandler = new UserHandler(this.keyboardManager);
     const taskHandler = new TaskHandler(this.taskService, this.keyboardManager);
-    const myTasksHandler = new MyTasksHandler(this.taskService, this.keyboardManager);    
+    const myTasksHandler = new MyTasksHandler(this.taskService, this.keyboardManager);
+    this.myTasksHandler = myTasksHandler;
     // Store handlers for cleanup
     this.handlers = [
       menuHandler,
@@ -118,6 +120,8 @@ export class TelegramCoordinator {
     this.actionRegistry.registerRegexHandler(/^show_tasks_/, myTasksHandler);
     this.actionRegistry.registerRegexHandler(/^task_detail_/, myTasksHandler);
     this.actionRegistry.registerRegexHandler(/^mark_done_/, myTasksHandler);
+    this.actionRegistry.registerRegexHandler(/^report_dirty_/, myTasksHandler);
+    this.actionRegistry.registerRegexHandler(/^report_issue_/, myTasksHandler);
   }
 
   /**
@@ -133,7 +137,7 @@ export class TelegramCoordinator {
     
     try {
       logger.info(`[TelegramCoordinator] Handling action: ${actionData} for user ${ctx.userId}`);
-      
+
       // Only reset edit state for actions that shouldn't inherit previous task selection
       const state = this.keyboardManager.getUserState(ctx.userId);
       
@@ -242,10 +246,34 @@ export class TelegramCoordinator {
   }
 
   async handleIncomingMessage(ctx: TelegramContext): Promise<void> {
-    const message = ctx.message as TelegramMessage;
-    if (ctx.session?.waitingForPhoto) {
-      logger.info(`[handleIncomingMessage] User ${ctx.userId} is sending photo or comment`);
+    const knownNavigationButtons = [
+      { text: '📋 Мої завдання', action: 'show_tasks' },
+      { text: '⚙️ Меню', action: 'show_menu' },
+      { text: '❓ Допомога', action: 'help' },
+      { text: 'ℹ️ Про бота', action: 'about' },
+      { text: '👨‍💼 Адмін панель', action: 'admin_panel' }
+    ];
 
+    const message = ctx.message as TelegramMessage;
+
+    logger.info(`[handleIncomingMessage] Incoming message for user=${ctx.userId}`);
+    logger.info(`[handleIncomingMessage] ctx.session: ${JSON.stringify(ctx.session)}`);
+    logger.info(`[handleIncomingMessage] ctx.message: ${JSON.stringify(ctx.message)}`);
+
+    if (ctx.session?.isProblemReport && ctx.message?.text) {
+      const problemComment = ctx.message.text;
+
+      logger.info(`[handleIncomingMessage] Received problem report comment: ${problemComment}`);
+
+      await this.myTasksHandler.updateTaskNotes(ctx.session.reservationIdForPhoto!, problemComment);
+      clearSession(String(ctx.userId));
+
+      await ctx.reply('✅ Проблему збережено! Дякуємо за повідомлення.');
+      await this.showKeyboard(ctx, 'main_nav');
+      return;
+    }
+
+    if (ctx.session?.waitingForPhoto) {
       if (ctx.message?.photo) {
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         ctx.session.collectedPhotos!.push(photo.file_id);
@@ -255,18 +283,21 @@ export class TelegramCoordinator {
         }
 
         setSession(String(ctx.userId), ctx.session);
+        return;
+      }
 
-      } else if (ctx.message?.text) {
+      if (ctx.message?.text) {
         const comment = ctx.message.text;
         ctx.session.comment = (ctx.session.comment || '') + ' ' + comment;
         setSession(String(ctx.userId), ctx.session);
 
-        logger.info(`[handleIncomingMessage] Received comment: ${comment}`);
+        logger.info(`[handleIncomingMessage] Received cleaning comment: ${comment}`);
         await ctx.reply(`📝 Коментар отримано: "${comment}"`);
-
-      } else {
-        await ctx.reply(`⚠️ Будь ласка, надішліть фото або коментар.`);
+        return;
       }
+
+      await ctx.reply(`⚠️ Будь ласка, надішліть фото або коментар.`);
+      return;
     }
   }
 }

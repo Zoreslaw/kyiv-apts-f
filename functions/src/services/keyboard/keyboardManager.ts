@@ -30,6 +30,8 @@ export interface TelegramContext {
     photoWaitingStart?: number;
     collectedPhotos?: string[];
     comment?: string;
+    isDirtyReport?: boolean;
+    isProblemReport?: boolean;
   };
   message?: {
     message_id?: number;
