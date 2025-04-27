@@ -180,23 +180,24 @@ export class MyTasksHandler implements ActionHandler {
             const result = await this.taskService.getTasksForUser(ctx.userId);
             const tasks = result?.tasks || [];
 
-            if (tasks.length === 0) {
-                await ctx.reply("📋 Завдань не знайдено.", { parse_mode: "Markdown" });
-                return;
-            }
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
 
-            const total = tasks.length;
+            const tasksFromToday = tasks.filter(task => toDateSafe(task.dueDate).getTime() >= today.getTime());
+            const total = tasksFromToday.length;
+
             const pageSize = 5;
             const totalPages = Math.max(1, Math.ceil(total / pageSize));
             const currentPage = Math.max(1, Math.min(page, totalPages));
 
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-
-            const tasksToShow = tasks
+            const tasksToShow = tasksFromToday
                 .sort((a, b) => toDateSafe(a.dueDate).getTime() - toDateSafe(b.dueDate).getTime())
-                .filter(task => toDateSafe(task.dueDate).getTime() >= today.getTime())
                 .slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+            if (tasksToShow.length === 0) {
+                await ctx.reply("📋 Завдань не знайдено.", { parse_mode: "Markdown" });
+                return;
+            }
 
             const tasksByDate = new Map<string, typeof tasks>();
             for (const task of tasksToShow) {
