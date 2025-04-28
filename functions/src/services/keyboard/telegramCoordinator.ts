@@ -83,6 +83,7 @@ export class TelegramCoordinator {
     // User management actions
     this.actionRegistry.registerDirectHandler('manage_users', userHandler);
     this.actionRegistry.registerDirectHandler('back_to_users', userHandler);
+    this.actionRegistry.registerDirectHandler('cancel_user_edit', userHandler);
     this.actionRegistry.registerRegexHandler(/^user/, userHandler);
     this.actionRegistry.registerRegexHandler(/^edit_user_/, userHandler);
     this.actionRegistry.registerRegexHandler(/^confirm_delete_user_/, userHandler);
@@ -188,6 +189,19 @@ export class TelegramCoordinator {
       
       if (shouldTransition && !mustDelegateActions.includes(actionData)) {
         logger.debug(`[TelegramCoordinator] Keyboard transition handled action: ${actionData}`);
+        
+        // For admin_panel, always try to delete the message with the button
+        if (actionData === 'admin_panel' && ctx.messageIdToEdit) {
+          try {
+            // Delete the message with the "Back" button (users list)
+            await ctx.deleteMessage(ctx.messageIdToEdit);
+            logger.debug(`[TelegramCoordinator] Deleted message ${ctx.messageIdToEdit} for admin_panel action`);
+          } catch (err) {
+            // Ignore deletion errors
+            logger.debug(`[TelegramCoordinator] Could not delete message for admin_panel action: ${err}`);
+          }
+        }
+        
         return true;
       }
       
@@ -196,7 +210,21 @@ export class TelegramCoordinator {
       }
       
       // Delegate to registered handlers
-      return await this.actionRegistry.handleAction(ctx, actionData);
+      const result = await this.actionRegistry.handleAction(ctx, actionData);
+      
+      // For admin_panel, always try to delete the message with the button
+      if (actionData === 'admin_panel' && ctx.messageIdToEdit) {
+        try {
+          // Delete the message with the "Back" button (users list)
+          await ctx.deleteMessage(ctx.messageIdToEdit);
+          logger.debug(`[TelegramCoordinator] Deleted message ${ctx.messageIdToEdit} for admin_panel action`);
+        } catch (err) {
+          // Ignore deletion errors
+          logger.debug(`[TelegramCoordinator] Could not delete message for admin_panel action: ${err}`);
+        }
+      }
+      
+      return result;
     } catch (error) {
       logger.error(`[TelegramCoordinator] Error handling action ${actionData}:`, error);
       await ctx.reply(`Помилка при обробці команди. Спробуйте пізніше.`);

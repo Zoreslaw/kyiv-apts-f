@@ -97,6 +97,16 @@ export class MenuHandler implements ActionHandler {
     }
     
     await this.keyboardManager.cleanupMessages(ctx);
+    
+    // Explicitly delete the callback message (users list) if present
+    if (ctx.messageIdToEdit) {
+      try {
+        await ctx.deleteMessage(ctx.messageIdToEdit);
+      } catch (err) {
+        // Ignore if already deleted
+      }
+    }
+    
     await this.keyboardManager.showKeyboard(ctx, 'admin_nav', '*Адмін-панель*\nВиберіть опцію:');
   }
   

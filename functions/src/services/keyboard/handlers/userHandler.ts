@@ -547,9 +547,10 @@ export class UserHandler implements ActionHandler {
    * Cancel user edit and return to list
    */
   private async cancelUserEdit(ctx: TelegramContext): Promise<void> {
+    // Clean up all tracked menu messages for this user
+    await this.keyboardManager.cleanupMessages(ctx);
     const state = this.keyboardManager.getUserState(ctx.userId);
     const page = state.currentData?.userListPage || 1;
-    
     await this.listUsers(ctx, page);
   }
   
@@ -557,12 +558,13 @@ export class UserHandler implements ActionHandler {
    * Return to users list
    */
   private async backToUsersList(ctx: TelegramContext): Promise<void> {
+    // Clean up all tracked menu messages for this user
+    await this.keyboardManager.cleanupMessages(ctx);
     // Clear editing user
     const state = this.keyboardManager.getUserState(ctx.userId);
     if (state.currentData) {
       state.currentData.editingUser = undefined;
     }
-    
     const page = state.currentData?.userListPage || 1;
     await this.listUsers(ctx, page);
   }
