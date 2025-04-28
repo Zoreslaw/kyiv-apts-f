@@ -260,6 +260,32 @@ export class TelegramCoordinator {
     logger.info(`[handleIncomingMessage] ctx.session: ${JSON.stringify(ctx.session)}`);
     logger.info(`[handleIncomingMessage] ctx.message: ${JSON.stringify(ctx.message)}`);
 
+    if (ctx.message?.text) {
+      const button = knownNavigationButtons.find(btn => btn.text === message.text);
+      if (button) {
+        logger.info(`[handleIncomingMessage] User ${ctx.userId} clicked known navigation button: ${button.text}`);
+        clearSession(String(ctx.userId));
+        await this.handleAction(ctx, button.action);
+        return;
+      }
+
+      const commandActions: { [key: string]: string } = {
+        "/menu": "show_menu",
+        "/help": "help",
+        "/about": "about",
+        "/get_my_tasks": "show_tasks",
+        "/admin": "admin_panel"
+      };
+
+      const action = commandActions[ctx.message.text];
+      if (action) {
+        logger.info(`[handleIncomingMessage] User ${ctx.userId} typed command: ${ctx.message.text}`);
+        clearSession(String(ctx.userId));
+        await this.handleAction(ctx, action);
+        return;
+      }
+    }
+
     if (ctx.session?.isProblemReport && ctx.message?.text) {
       const problemComment = ctx.message.text;
 

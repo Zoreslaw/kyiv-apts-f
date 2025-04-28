@@ -263,7 +263,7 @@ export class MyTasksHandler implements ActionHandler {
             }
 
             const taskButtons = tasksToShow.map((task) => [{
-                text: `${task.type === 'checkin' ? '🟢 Заїзд' : '🔴  Виїзд'}: ${task.apartmentId}: ${task.address}`,
+                text: `${task.type === 'checkin' ? '🟢 Заїзд' : '🔴  Виїзд'}: ${task.apartmentId} - ${task.address}`,
                 callback_data: `task_detail_${task.reservationId}`
             }]);
 
