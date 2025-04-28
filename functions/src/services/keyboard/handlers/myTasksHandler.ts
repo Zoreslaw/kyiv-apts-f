@@ -353,6 +353,7 @@ export class MyTasksHandler implements ActionHandler {
         logger.info(`[showTaskDetails] reservationId=${reservationId}`);
 
         try {
+            await this.keyboardManager.cleanupMessages(ctx);
             const result = await this.taskService.getTasksForUser(ctx.userId);
             const tasks = result?.tasks || [];
             logger.debug(`[showTaskDetails] All reservationIds: ${tasks.map(t => t.reservationId).join(', ')}`);
@@ -414,10 +415,11 @@ export class MyTasksHandler implements ActionHandler {
                 ]
             };
 
-            await ctx.reply(message, {
+            const sentMessage = await ctx.reply(message, {
                 parse_mode: 'Markdown',
                 reply_markup: keyboard
             });
+            this.keyboardManager.storeMessageId(ctx.userId, sentMessage.message_id);
 
         } catch (error) {
             logger.error('[showTaskDetails] Error:', error);
@@ -442,7 +444,8 @@ export class MyTasksHandler implements ActionHandler {
 
             setSession(String(ctx.userId), ctx.session);
 
-            await ctx.reply(
+            await this.keyboardManager.cleanupMessages(ctx);
+            const msg = await ctx.reply(
                 `📸 *Будь ласка, надішліть фото прибраної квартири та, за бажанням, залиште коментар.*\n\n` +
                 `Коли завершите, натисніть "✅ Готово".`,
                 {
@@ -455,6 +458,7 @@ export class MyTasksHandler implements ActionHandler {
                     }
                 }
             );
+            this.keyboardManager.storeMessageId(ctx.userId, msg.message_id);
 
         } catch (error) {
             logger.error('[handleMarkDone] Error:', error);
@@ -480,7 +484,8 @@ export class MyTasksHandler implements ActionHandler {
 
             setSession(String(ctx.userId), ctx.session);
 
-            await ctx.reply(
+            await this.keyboardManager.cleanupMessages(ctx);
+            const msg = await ctx.reply(
                 `🧽 *Будь ласка, надішліть фото стану квартири та короткий опис проблеми.*\n\n` +
                 `Коли завершите, натисніть "✅ Готово".`,
                 {
@@ -493,6 +498,7 @@ export class MyTasksHandler implements ActionHandler {
                     }
                 }
             );
+            this.keyboardManager.storeMessageId(ctx.userId, msg.message_id);
 
         } catch (error) {
             logger.error('[handleMarkDirty] Error:', error);
@@ -513,10 +519,12 @@ export class MyTasksHandler implements ActionHandler {
 
             setSession(String(ctx.userId), ctx.session);
 
-            await ctx.reply(
+            await this.keyboardManager.cleanupMessages(ctx);
+            const msg = await ctx.reply(
                 `✏️ *Будь ласка, опишіть проблему або нестачу у квартирі текстом.*`,
                 { parse_mode: 'Markdown' }
             );
+            this.keyboardManager.storeMessageId(ctx.userId, msg.message_id);
 
         } catch (error) {
             logger.error('[handleReportProblem] Error:', error);
